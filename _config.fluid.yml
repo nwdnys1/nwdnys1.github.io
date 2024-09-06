@@ -1,0 +1,118 @@
+navbar:
+  blog_title: nwdnysl
+
+web_analytics: # 网页访问统计
+  enable: true # 是否开启统计
+  leancloud: # LeanCloud 计数统计，可用于 PV UV 展示，如果 web_analytics.enable 没有开启，PV UV 展示只会查询，不会增加
+    app_id: K3gfd4q8rJCi8xAOEuzvZjux-gzGzoHsz
+    app_key: Ioo5JO9FN280cSqgdErfcr0g
+    server_url: https://k3gfd4q8.lc-cn-n1-shared.com # REST API 服务器地址，国际版不填
+
+footer:
+  statistics:
+    enable: true
+    source: "leancloud" # 可选 leancloud | busuanzi  根据自己需求选择
+    pv_format: "总访问量 {} 次" # 显示的文本，{}是数字的占位符（必须包含)，下同
+    uv_format: "总访客数 {} 人"
+
+dark_mode:
+  enable: true
+  default: auto
+
+index:
+  slogan:
+    enable: true
+    text: "受け継がれてく想い、先を行く先輩の願い\n———— TRUE《Blast!》"
+    api: # 从API中获取标语
+      enable: false
+      url: "https://v1.hitokoto.cn/"
+      method: "GET"
+      headers: {}
+      keys: ["hitokoto"]
+  post_url_target: _blank # 文章链接打开方式，_blank | _self
+  banner_img: /img/bg/home.jpg
+
+category:
+  banner_img: /img/bg/home.jpg
+
+tag:
+  banner_img: /img/bg/home.jpg
+
+archive:
+  banner_img: /img/bg/home.jpg
+
+about:
+  avatar: /img/avatar.png
+  name: "nwdnysl"
+  intro: "A student from SJTU who loves anime and programming."
+  icons:
+    - {
+        class: "iconfont icon-github-fill",
+        link: "https://github.com/nwdnys1",
+        tip: "GitHub",
+      }
+    - {
+        class: "iconfont icon-bilibili",
+        link: "https://space.bilibili.com/174502754?spm_id_from=333.1007.0.0",
+        tip: "Bilibili",
+      }
+  banner_img: /img/bg/home.jpg
+
+post:
+  default_index_img: /img/bg/home.jpg # 文章默认封面图
+  banner_img: /img/bg/home.jpg # 文章默认页头图
+  meta:
+    author: # 作者，优先根据 front-matter 里 author 字段，其次是 hexo 配置中 author 值
+      enable: true
+    views: # 阅读次数
+      enable: true
+      source: "leancloud" # 统计数据来源，可选：leancloud | busuanzi   注意不蒜子会间歇抽风
+      format: "{} 次"
+  comments:
+    enable: true
+    type: valine # 评论系统，可选：valine | waline | gitalk | gitment | disqus | changyan | livere
+
+valine:
+  appId: K3gfd4q8rJCi8xAOEuzvZjux-gzGzoHsz
+  appKey: Ioo5JO9FN280cSqgdErfcr0g
+  serverURLs: https://k3gfd4q8.lc-cn-n1-shared.com
+  placeholder: "请留下你的评论"
+  visitor: true
+  recordIP: true
+  emojiCDN: "//i0.hdslb.com/bfs/emote/"
+  emojiMaps:
+    tv_doge: "6ea59c827c414b4a2955fe79e0f6fd3dcd515e24.png"
+    tv_亲亲: "a8111ad55953ef5e3be3327ef94eb4a39d535d06.png"
+    tv_偷笑: "bb690d4107620f1c15cff29509db529a73aee261.png"
+    tv_再见: "180129b8ea851044ce71caf55cc8ce44bd4a4fc8.png"
+    tv_冷漠: "b9cbc755c2b3ee43be07ca13de84e5b699a3f101.png"
+    tv_发怒: "34ba3cd204d5b05fec70ce08fa9fa0dd612409ff.png"
+    "tv_发财": "34db290afd2963723c6eb3c4560667db7253a21a.png"
+    "tv_可爱": "9e55fd9b500ac4b96613539f1ce2f9499e314ed9.png"
+    "tv_吐血": "09dd16a7aa59b77baa1155d47484409624470c77.png"
+    "tv_呆": "fe1179ebaa191569b0d31cecafe7a2cd1c951c9d.png"
+    "tv_呕吐": "9f996894a39e282ccf5e66856af49483f81870f3.png"
+    "tv_困": "241ee304e44c0af029adceb294399391e4737ef2.png"
+    "tv_坏笑": "1f0b87f731a671079842116e0991c91c2c88645a.png"
+    "tv_大佬": "093c1e2c490161aca397afc45573c877cdead616.png"
+    "tv_大哭": "23269aeb35f99daee28dda129676f6e9ea87934f.png"
+    "tv_委屈": "d04dba7b5465779e9755d2ab6f0a897b9b33bb77.png"
+    "tv_害羞": "a37683fb5642fa3ddfc7f4e5525fd13e42a2bdb1.png"
+    "tv_尴尬": "7cfa62dafc59798a3d3fb262d421eeeff166cfa4.png"
+    "tv_微笑": "70dc5c7b56f93eb61bddba11e28fb1d18fddcd4c.png"
+    "tv_思考": "90cf159733e558137ed20aa04d09964436f618a1.png"
+    "tv_惊吓": "0d15c7e2ee58e935adc6a7193ee042388adc22af.png"
+  enableQQ: true
+
+code:
+  copy_btn: true
+  highlight:
+    enable: true
+    line_number: true
+    lib: "highlightjs"
+    highlightjs:
+      style: "Github Gist"
+      bg_color: false
+    prismjs:
+      style: "default"
+      preprocess: true
