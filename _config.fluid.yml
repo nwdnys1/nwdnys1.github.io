@@ -31,7 +31,7 @@ index:
       method: "GET"
       headers: {}
       keys: ["hitokoto"]
-  post_url_target: _blank # 文章链接打开方式，_blank | _self
+  post_url_target: _self # 文章链接打开方式，_blank | _self
   banner_img: /img/bg/home.jpg
 
 category:
@@ -43,10 +43,17 @@ tag:
 archive:
   banner_img: /img/bg/home.jpg
 
+skip_render:
+  - "css/**/*"
+
+custom_css:
+  - /css/wyy/iconfont.css
+
 about:
   avatar: /img/avatar.png
   name: "nwdnysl"
   intro: "A student from SJTU who loves anime and programming."
+  banner_img: /img/bg/home.jpg
   icons:
     - {
         class: "iconfont icon-github-fill",
@@ -58,10 +65,24 @@ about:
         link: "https://space.bilibili.com/174502754?spm_id_from=333.1007.0.0",
         tip: "Bilibili",
       }
-  banner_img: /img/bg/home.jpg
+    - {
+        class: "iconfont icon-qq-fill",
+        qrcode: "/img/qrcode/qq.jpg",
+        tip: "QQ",
+      }
+    - {
+        class: "iconfont icon-wechat-fill",
+        qrcode: "/img/qrcode/wechat.jpg",
+        tip: "WeChat",
+      }
+    - {
+        class: "icon iconfont icon-wangyiyunyinle",
+        qrcode: "/img/qrcode/wyy.jpg",
+        tip: "网易云音乐",
+      }
 
 post:
-  default_index_img: /img/bg/home.jpg # 文章默认封面图
+  # default_index_img: /img/bg/home.jpg # 文章默认封面图
   banner_img: /img/bg/home.jpg # 文章默认页头图
   meta:
     author: # 作者，优先根据 front-matter 里 author 字段，其次是 hexo 配置中 author 值
