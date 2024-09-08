@@ -24,7 +24,7 @@ layout: about
 
     有空会用 Kindle 看看漫画原作 比如最近看的摇曳百合 龙女仆 藤本树老师的一些作品
 
-    附上平常用于看漫画的 **mox.moe**：[nwdnysl 的主页](https://mox.moe/u/10036560/)
+    附上平常用于看漫画的 **Kox.moe**：[nwdnysl 的主页](https://mox.moe/u/10036560/)
 
   - Games：
 
@@ -44,7 +44,11 @@ layout: about
 
 ## 个人项目
 
--
+- [E-Bookstore 电子书店平台](https://github.com/nwdnys1/E-Bookstore)：个人制作的电子书店平台 基于 React+Spring Boot+MySQL 实现 设计灵感来源于[Kox.moe](https://mox.moe)
+
+- [JustAsk 专家咨询平台](https://github.com/Horizon12275/JustAsk)
+
+- [TimeGenie 移动端日程管理 APP](https://github.com/Horizon12275/TimeGenie)
 
 ## 联系方式
 
