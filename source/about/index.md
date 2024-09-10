@@ -42,15 +42,15 @@ layout: about
 
 - 喜欢**骑行**和**慢跑**
 
-## 个人项目
+## Projects
 
 - [E-Bookstore 电子书店平台](https://github.com/nwdnys1/E-Bookstore)：个人制作的电子书店平台 基于 React+Spring Boot+MySQL 实现 设计灵感来源于[Kox.moe](https://mox.moe)
 
-- [JustAsk 专家咨询平台](https://github.com/Horizon12275/JustAsk)
+- [JustAsk 多领域一对一咨询平台](https://github.com/Horizon12275/JustAsk)：此平台旨在实现高专业性、多领域的可靠咨询交流，为用户提供方便的咨询服务，为专家提供传播专业知识的平台。
 
-- [TimeGenie 移动端日程管理 APP](https://github.com/Horizon12275/TimeGenie)
+- [TimeGenie AI 日程管理 APP](https://github.com/Horizon12275/TimeGenie)：此 APP 旨在利用人工智能技术，帮助用户管理日程安排、生成日程事项与建议、建立用户画像以及知识库从而实现提供个性化的服务，提高生活效率和便利性。
 
-## 联系方式
+## Contacts
 
 - Email：ZH13588083809@sjtu.edu.cn
 - Wechat：见二维码
