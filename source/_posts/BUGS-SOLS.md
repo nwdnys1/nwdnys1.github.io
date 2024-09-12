@@ -112,6 +112,10 @@ excerpt: " "
 
 - ELF 结合 springboot：https://www.cnblogs.com/toutou/p/SpringBoot_elk.html#_label1
 
+# 部署
+
+- Ubuntu 使用 apt 安装的 nodejs 版本太低了 如何安装 v18：https://blog.csdn.net/weixin_42582542/article/details/129982650
+
 # 杂项
 
 - 将后端改为使用 https 但前端仍为 http 时 会导致跨域问题 具体而言 服务器通过响应 body 里的 set-cookie 项来提供 cookie 其中有一个 samesite 属性用于告诉浏览器（客户端）这个 cookie 在什么时候需要发送 如果响应体里没有 samesite 属性 浏览器默认设置其为 lax 这会导致后端只能在不跨站（前端后端 url）的情况下发送 cookie 解决方法是后端显式设置 samesite 为 none 即不管何时都发送
@@ -120,7 +124,7 @@ excerpt: " "
 
   顺便说一下跨域和跨站的区别：
 
-  - 跨域=不同源 同源=协议+域名+端口相同
+  - 跨域=不同源 同源=协议+域名+端口相同 CORS 协议浏览器为了防止潜在的黑客攻击（比如暗中让你把请求发给其他网站）而使用的
   - 跨站：先说明 eTLD+1 是什么东西 TLD（顶级域名）是记录在一个列表中的所有最高级别域名 比如常见的 com eTLD 则是有效顶级域名 是 TLD 再往前加一个点 +1 显然就是再加一层域名 eTLD+1 部分的域名相同=不跨站
 
 - js 中的对象赋值都是按引用传递的 这意味着如果你不进行显式的深拷贝 就会莫名其妙改变父组件的参数 注意赋值时用复制对象而不是简单的"="即可

@@ -96,6 +96,167 @@ excerpt: " "
 
 # 部署
 
+## 云服务器
+
+以华为云的 2G2 核的免费云服务器为例 尝试进行完整的部署流程 包括安全组设置 nginx 配置等等
+
+### 前置工作
+
+- 服务器选择：Linux 系统最为普遍 选择了 Ubuntu22.04 镜像 自动配一个宝塔面板方便可视化监控和管理
+
+- 安全组设置：安全组可以理解为以实例为单位的出入规则组 只需要开放安全组内互相出入 以及固定常用端口所有源地址的入方向即可（配置 NGINX 后应该只需要开放 80 和 443）
+
+- SSH 连接服务器：使用 MobaXtern 进行连接 输入公网 IP 和密码即可登录
+
+- 登录宝塔面板：在主机获取宝塔面板的密码后即可登录 后续可以用可视化界面进行软件安装管理与状态监控 注意**宝塔面板**安装的环境都位于 www/server 下
+
+### Spring Boot 项目的部署
+
+1. 打包为 jar 包 可以使用 IDEA 也可以使用 CLI
+
+   - 使用 IDEA 记得切换跳过模式来跳过测试 否则测试不通过没法生成 jar 包
+   - 使用 IDEA 记得把 pom 文件里的主类 configuration 下方的 skip 删掉 否则就会跳过主类配置 然后 jar 包就会因为缺少主类而无法启动
+
+2. 服务器上配置环境：安装 jdk 直接 apt install 即可
+3. 运行 jar 包即可 `nohup java -jar backend-0.0.1-SNAPSHOT.jar &` 输入 `tail -500f nohup.out` 来查看日志
+
+### React + Vite 项目的部署(参考)
+
+1.  在服务器上配置环境：
+
+    安装 nodejs 见https://blog.csdn.net/weixin_42582542/article/details/129982650
+
+    安装 nginx 可以使用 apt 也可以宝塔面板进行编译安装
+
+2.  打包项目 `npm run build` 产生的 dist 文件夹放入服务器
+
+3.  进入 nginx/conf/寻找配置文件进行修改 只需配置监听端口（80 是 http 默认端口） 虚拟主机名（没有域名就使用 ip） 以及 location（见下方代码） 最后运行`nginx -s reload`重新加载一下配置即可访问了
+
+```
+  server
+  {
+    listen 80;
+    server_name 60.204.211.255;
+
+    # 前端页面
+    location / {
+      root    /root/ebookstore/frontend;
+      try_files $uri /index.html;  # 处理 SPA 路由
+    }
+
+    #后端API 转发给8080
+    location = /api {
+      proxy_pass http://60.204.211.255:8080;
+      proxy_set_header        Host $host;
+      proxy_set_header        X-Real-IP $remote_addr;
+      proxy_set_header        X-Forwarded-For $proxy_add_x_forwarded_for;
+      proxy_set_header        REMOTE-HOST $remote_addr;
+    }
+  }
+```
+
+4. 前后端分离项目的跨域问题
+
+   前后端由于端口不一致或协议不一致等 会导致 403 报错 解决方法采用 nginx 配置反向代理 有多种方法
+
+   - 配置转发 把带有前缀/api/的请求转发给 8080 端口 消除了前后端差异（最终采用此种方法 注意 location 的配置很细节 不同的匹配方式会导致不同的结果 比如`/api` 还是`/api/`）
+   - 也可以添加允许跨域请求头
+   - 当然也可以在后端中配置运行跨域的来源
+
+### 配置图片等静态资源的访问和上传
+
+1. 修改 Nginx 配置以暴露图片资源文件夹 如下
+
+```
+  # 静态资源
+  location /image/ {
+    alias /root/ebookstore/static/image/;
+    autoindex on;
+    try_files $uri $uri/ =404;
+  }
+
+```
+
+2. 如何上传图片资源到 jar 包以外的固定路径：只需要写成绝对路径即可 比如`/root/ebookstore/static/`
+3. 如何加快图片加载速度？
+
+   由于服务器的带宽只有 2Mbit/s 传输一张 24MB 的图片需要惊人的 96s 这显然是很坑爹的 除了提升带宽以外 还可以使用什么方法提高效率呢？
+
+   1. 进行压缩处理 nginx 提供的 gzip 对图片压缩的效果并不好 因此可使用其他压缩工具
+   2. 使用 CDN 分发
+   3. 配置缓存
+   4. 嫖别人的服务器 也就是图床
+
+### 使用赛博活菩萨 CloudFlare 的 R2 服务配置图床
+
+1. 注册[CloudFlare](https://dash.cloudflare.com/)账号 订阅 R2 服务 创建新的存储桶 然后允许公网访问 至此个人图床就可以使用了
+2. 接下来使用[PicGo](https://github.com/Molunerfinn/PicGo)进行上传和获取 url 的自动化 参考https://www.pseudoyu.com/zh/2024/06/30/free_image_hosting_system_using_r2_webp_cloud_and_picgo/ 这个软件也可以用于写博客时上传图片
+3. 
+
+## Nginx
+
+Nginx (engine x) 是一个高性能的 HTTP 和反向代理 web 服务器软件 可以进行反向代理和负载均衡等功能
+
+- 安装
+
+  - 包管理安装：比如 Linux 的 apt
+  - 编译安装： 因为是 C 语言开发的 所以可以进行编译来进行安装 如果需要自定义特殊功能就使用这种
+  - 容器安装：docker 拉取官方镜像即可
+
+- 进程模型
+
+  - master 主进程
+  - worker 工作进程 数量与 CPU 内核数保持一致比较好
+
+- 配置文件
+
+  - `nginx -t`命令检查配置文件是否正确
+  - `nginx -s reload`命令重新加载配置文件
+  - 配置块分为 3 个
+
+    1. 全局配置
+
+    - user 指定启动进程的用户
+    - error_log 指定日志输出路径
+    - pid 记录 pid 的文件路径
+    - worker_processes 设置工作进程数量 auto 根据 CPU 核数设置
+
+    2. events 块 配置一些服务器客户端网络连接参数
+
+    - worker_connections 一个工作进程的最大客户端连接数
+
+    3. http 块
+
+    - include 指令可以包含其他配置文件（为了拆分）或者 mime.types（用于处理不同后缀的文件）
+    - default_type 默认返回文件类型
+    - sendfile 开启 sendfile
+    - keepalive_timeout 连接超时时间
+    - upstream 块 指定一组服务器的池 来实现负载均衡
+
+      - server 指定 url
+      - weight 指定权重
+
+    - server 块
+
+      - listen 监听端口
+      - server_name 虚拟主机名 如果请求的 host 名和此名匹配 则处理请求
+      - default_type 默认响应类型
+      - root 指定默认根目录
+      - location 块
+        - 具有四个匹配优先级（从低到高） 同优先级下 匹配更精确的优先
+        1. 前缀匹配（/） 相当于把前缀更换为 root 路径来查找文件资源
+        2. 正则匹配（~、~\*）带\*的是不区分大小写
+        3. 优先前缀（^~）
+        4. 精确匹配（=） 路径必须完全一致 最强
+        - proxy_pass 反向代理转发给其他端口 也可以转发给 http://upstream_name 来实现负载均衡
+        - root 指定根目录 提供静态资源 覆盖默认配置
+        - index 指定查找哪些静态文件作为首页
+        - rewrite 重写请求的 uri 进行重定向
+        - return 直接返回状态码和消息
+        - deny/allow 依据 ip 地址进行访问限制
+        - add_header 为响应添加 header 键值对形式
+        - try_files 按照顺序查找文件 定向到第一个匹配的文件 这对于 SPA 应用（比如 react）非常重要 因为 SPA 项目是单页面的 不能直接映射文件路径 都需要转发给 index 文件来处理
+
 ## Docker
 
 - 为了解决不同环境不同操作系统导致的程序运行问题 把用户空间 环境以及程序（不包含操作系统和内核）全部打包成一个文件（镜像） 有需要使用的用户只需要拉取镜像来解压缩后运行在容器（一个相对隔离 共享了主机操作系统的内核 但是运行在独立的用户空间的进程） 总结一下就是不带操作系统内核的 专门用于运行某一个程序及其所需依赖和环境的轻量虚拟机
