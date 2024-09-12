@@ -174,7 +174,6 @@ excerpt: " "
     autoindex on;
     try_files $uri $uri/ =404;
   }
-
 ```
 
 2. 如何上传图片资源到 jar 包以外的固定路径：只需要写成绝对路径即可 比如`/root/ebookstore/static/`
@@ -186,12 +185,19 @@ excerpt: " "
    2. 使用 CDN 分发
    3. 配置缓存
    4. 嫖别人的服务器 也就是图床
+   5. 存放到数据库里
 
-### 使用赛博活菩萨 CloudFlare 的 R2 服务配置图床
+### 使用赛博活菩萨 CloudFlare 的 R2 服务配置个人图床
 
 1. 注册[CloudFlare](https://dash.cloudflare.com/)账号 订阅 R2 服务 创建新的存储桶 然后允许公网访问 至此个人图床就可以使用了
 2. 接下来使用[PicGo](https://github.com/Molunerfinn/PicGo)进行上传和获取 url 的自动化 参考https://www.pseudoyu.com/zh/2024/06/30/free_image_hosting_system_using_r2_webp_cloud_and_picgo/ 这个软件也可以用于写博客时上传图片
-3. 
+3. 除了手动上传 还需要实现后端上传的 API 采用 aws-java-sdk 来实现 这个 sdk 提供了 java 访问 S3 服务的接口
+
+   参考http://public-cloud-doc.nos-eastchina1.126.net/S3-JAVA-SDK.html#、https://blog.csdn.net/qq_40942490/article/details/110168965
+
+   在 pom 导入 sdk 的依赖 然后编写两个文件 一个 config 注入密钥等配置 一个 service 实现上传图片的函数即可
+
+至此 不仅可以手动上传图片 也可以在自己的项目里使用上传图片的接口 以后图片就无需重新迁移了
 
 ## Nginx
 
