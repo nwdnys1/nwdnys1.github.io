@@ -69,6 +69,11 @@ excerpt: " "
 
 - Spring Boot 6 之后如何对请求的 ip 地址进行限制：https://blog.csdn.net/weixin_43162683/article/details/135946939
 
+- Security 处理登录和 session 的逻辑：使用 session 最简单的情况就是把 session 存到一个 map 里维护即可 而 security 为了方便 还多做了几步操作 见下图：
+  ![](https://image.blog.nwdnysl.site/20240925171617-bc5673d0edd810f34c0e5e54e6c91072.png)
+
+- Security 中如何判断 session 是否有效（千万别用 isNew）：https://blog.csdn.net/lisheng19870305/article/details/40738169/
+
 ## Spring Cache
 
 - 沟槽的 springcache 注解 因为 aop 要走 spring 框架代理的原因 如果在同一个 service 里拆分两个函数 一个函数写 cache 注解 另一个函数进行调用 这样的方式是不走代理的 也就不会生效 只能重新写一个 service 或者提取到 controller 里
