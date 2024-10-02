@@ -149,16 +149,6 @@ excerpt: " "
     - 如果服务层使用了 session 作用域 而控制层却使用单例作用域 因为控制层只被创造一次 也就只进行一次依赖注入 也就是说控制层实际上只会调用同一个服务层实例 那么服务层的 session 作用域也就无效了 同理如果是 prototype 作用域 会出现多个 controller 实例注入了同一个服务层实例的问题 而且也没必要每次请求都创建新的控制层实例 所以也不妥
     - 和服务层一样使用 session 作用域是最好的选择 同一个会话的所有请求对应控制层 这个控制层又会对应注入一个服务层
 
-### 作业：使用 Kafka 中间件处理订单请求
-
-- 配置 kafka 环境：使用容器即可 新版 kafka 无需再使用 zookeeper 只需要使用内置的 raft 即可 总共两行代码搞定 `docker pull apache/kafka:3.7.0` `docker run -d -p 9092:9092 apache/kafka:3.7.0`
-- 在 Spring 里使用 kafka(可参考：https://blog.csdn.net/Eternal_Blue/article/details/125293622)
-  1. 首先添加依赖`spring-kafka` 然后在 application.yml 文件里配置 bootstrap-servers（服务 url）
-  2. 创建话题：随便创建个类 或者在启动类里 注册类型为 NewTopic 的 Bean spring 会自动读取并在 kafka 里进行创建 参数分别是 topic 名称、分区数和复制因子
-  3. 发送消息：以下订单为例 在控制层先进行鉴权获取 uid（因为消息接受时上下文就没有了） 然后调用 kafkaTemplate 的 send 方法发送封装好的消息即可
-  4. 监听消息：创建一个 Listener 类 在里面编写函数并打上`@KafkaListener`注解 这个函数会创建一个消费者实例进行消息的监听 注解参数有很多 主要是 topic 名称和 groupId 我的理解 一个组就是多个消费者并发的消费队列中的消息 可以提高效率 如果消息只有 1 个 那就会随机发给组内某一个消费者
-  5. 完成操作：消费者接收到下订单的消息后 调用服务层的方法来处理订单 把订单处理的结果使用 websocket 进行推送 即可让用户知道结果了
-
 ## 9.25
 
 ### 异步通信模型
@@ -234,5 +224,35 @@ excerpt: " "
 
 - topic 很大时可以用哈希分区 甚至可以形成集群 部署到不同服务器上 为了容灾还可以加复制因子参数 来进行备份
 
-- 如何实现（Kafka）
-  1. 安装 kafka 通过脚本生成一个集群 id zookeeper 用于监控集群管理 类似哨兵
+### 作业：使用 Kafka 中间件处理订单请求
+
+- 配置 kafka 环境：使用容器即可 新版 kafka 无需再使用 zookeeper 只需要使用内置的 raft 即可 总共两行代码搞定 `docker pull apache/kafka:3.7.0` `docker run -d -p 9092:9092 apache/kafka:3.7.0`
+- 在 Spring 里使用 kafka(可参考：https://blog.csdn.net/Eternal_Blue/article/details/125293622)
+  1. 首先添加依赖`spring-kafka` 然后在 application.yml 文件里配置 bootstrap-servers（服务 url）
+  2. 创建话题：随便创建个类 或者在启动类里 注册类型为 NewTopic 的 Bean spring 会自动读取并在 kafka 里进行创建 参数分别是 topic 名称、分区数和复制因子
+  3. 发送消息：以下订单为例 在控制层先进行鉴权获取 uid（因为消息接受时上下文就没有了） 然后调用 kafkaTemplate 的 send 方法发送封装好的消息即可
+  4. 监听消息：创建一个 Listener 类 在里面编写函数并打上`@KafkaListener`注解 这个函数会创建一个消费者实例进行消息的监听 注解参数有很多 主要是 topic 名称和 groupId 我的理解 一个组就是多个消费者并发的消费队列中的消息 可以提高效率 如果消息只有 1 个 那就会随机发给组内某一个消费者
+  5. 完成操作：消费者接收到下订单的消息后 调用服务层的方法来处理订单 把订单处理的结果使用 websocket 进行推送 即可让用户知道结果了
+
+## 9.30
+
+### WebSocket
+
+- ws 是一个全双工的应用协议 即双向工作对等 底层是TCP协议
+
+- ws应用会运行一个endpoint 注册此endpoint的uri作为连接端点 
+- 连接建立包含两部分 握手和数据传输 使用GET向endpoint进行请求 会进行协议的升级 握手后协议升级为ws 
+
+- 使用注解@ServerEndpoint来注册一个endpoint 作为服务端 OnOpen函数中进行连接建立时的操作 OnMessage函数进行收到消息时的操作 OnError、OnClose同理
+
+- 群发消息如果使用遍历是很慢的 因此需要把sessionMap开成并发安全结构 后续可以多线程处理
+
+- ws支持自定义编码器 对于文本和二进制消息有两个接口 实现接口中的encode方法后即可自定义如何编码 同样也有解码器接口 
+
+- 通过编写Message类的子类 可以实现多种自定义消息类 在decode时就可以根据类别对应处理 多个endpoint就可以使用一个decoder （也就是说 比如一个聊天室的endpoint 一个点赞消息通知的endpoint 聊天室可以有两种消息Text和Image 点赞可以有一种消息LikeM 三种消息都编码成文本 在同一个decoder里解码 分别解成三种子消息 然后根据消息类型分别处理）
+
+- 对于下订单服务 当listener收到订单处理完成的消息时 应该把消息封装后通过注入的ws发送给对应用户 用户在前端需要先注册好ws服务 可以再下订单之前建立连接 收到ws消息后关闭连接
+
+- 总结
+  - ajax实现的是前端的异步处理 即用户点击发送请求后可以立即进行其他操作 收到响应后会自动处理
+  - 消息队列实现的是后端的异步处理 让服务的处理可以异步实现 由于异步无法使用响应让用户知道结果 就使用ws来实时通知用户
