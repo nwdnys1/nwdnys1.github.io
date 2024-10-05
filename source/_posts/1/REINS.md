@@ -1,6 +1,6 @@
 ---
 title: 在SJTU-REINS的打工日记
-date: 2024-09-23 14:01:00
+date: 2024-10-05 21:19:00
 categories: 实验室
 tags:
   - 打工
