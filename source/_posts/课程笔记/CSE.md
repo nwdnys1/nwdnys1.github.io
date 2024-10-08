@@ -155,13 +155,91 @@ excerpt: " "
   - 由于数据泄露的问题 写时顺序应该采用更新 block bitmap、更新 inode、写入新数据 虽然此种顺序在极端情况下会产生硬盘浪费 但是可以通过扫描磁盘来恢复
 
 - SYNC
-  - 为了保证数据落盘 必须提供这个用于同步的API
+
+  - 为了保证数据落盘 必须提供这个用于同步的 API
 
 - 删除一个打开的文件
-  - 在linux系统下 文件的inode将会在refcnt归零后进行删除 也就是延迟到关闭文件后删除
+
+  - 在 linux 系统下 文件的 inode 将会在 refcnt 归零后进行删除 也就是延迟到关闭文件后删除
 
 - MALH
   - 模块化
   - 抽象化
   - 分层化
   - 层级化
+
+## LEC 5: Remote Procedure Call
+
+分布式的数据存储 形如让几十台电脑的所有硬盘空间汇聚到一块 然后所有电脑通过远程连接的方式访问文件系统 这样就实现了高效的数据存储利用 这也是 RPC 的产生背景
+
+### An Example
+
+- 本地调用函数会变成对于远端服务器上函数的调用
+
+- RPC Stub（把底层的代码进行封装 从而对于高层的应用就透明了）
+
+  - client stub
+    - 放入参数
+    - 发送请求
+    - 等待响应
+  - server stub
+    - 监听消息
+    - 获取参数
+    - 调用过程
+    - 将结果放入响应
+    - 发送响应
+  - 通过 stub 我们在不修改原来函数的情况下实现了远程调用
+
+- A Message May Contain：
+
+  - 服务 ID
+  - 服务的参数
+  - 序列化与反序列化
+
+- RPC request：
+
+  - Xid：事务 id
+  - call/reply
+  - rpc version
+  - program number：哪个二进制文件
+  - program version
+  - procedure number：哪个函数
+  - auth stuff：权限
+  - arguments
+
+- RPC reply
+  - Xid：事务 id
+  - call/reply
+  - accepted：是否接受请求 根据版本号、权限认证等
+  - auth stuff
+  - success：是否请求成功 根据文件号和过程号是否合法
+  - results
+
+### How to Pass the Data？
+
+- Parameter passing
+
+  - client 把内存中的对象序列化为无指针的结构
+  - 发送数据
+  - server 反序列化为内存中的对象并建立指针
+
+- 不同机器间的数据形式会有很多差别
+
+  - 大端小端
+  - 32 位 64 位
+  - 浮点数的格式
+  - 字符集 utf 或其他
+  - 对齐方式
+
+- 标准化的编码
+
+  - textual：json、xml、csv 等 存在二义性 且不适用于二进制数据
+  - binary：更快更小 但是不可读 对于用户不友好 会通过 IDL 来定义结构
+
+- 传输协议
+  - TCP：可靠 但是慢
+  - UDP：快 但是不可靠
+
+### When RPC Meets Failure
+
+- 服务器不响应 用户是不知道原因的
