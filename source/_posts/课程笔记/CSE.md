@@ -242,4 +242,77 @@ excerpt: " "
 
 ### When RPC Meets Failure
 
-- 服务器不响应 用户是不知道原因的
+- semantics（语义）
+
+  - at most once：保证请求最多执行一次
+  - at least once：保证请求至少执行一次
+  - exactly once：保证请求只执行一次
+
+- idempotent
+
+  - 一个函数如果多次执行结果是一样的 就是幂等的
+  - RPC 系统会保证幂等性 使得错误处理可以用简单的 retry 来解决
+
+## LEC 6: Distributed Filesystem
+
+- Distributed File Service Types
+  - Upload/Download：比如 FTP 通过上传下载文件来实现 浪费资源
+  - Remote Access：比如 NFS 通过远程访问文件来实现 用 RPC 接口
+
+### NFS with RPC
+
+- NFS 即 Network File System
+- NFS 将大部分的接口替换为了 RPC 接口 但是没有 OPEN 和 CLOSE 接口 READ 和 WRITE 接口则多了一个 offset 参数 MKDIR 返回的多了 fh（file handle）参数
+- NFS Protocol Steps:
+  1. Mount：客户端通过 mount 命令将远程文件系统挂载到本地 形如`mount 192.168.1.1:/home /mnt`
+  2. Read a file：应用调用 OPEN("f",O) NFS 会调用 LOOKUP(dirfh,"f") 把结果填到 fd 中返回给应用 应用调用 READ(fd,buf,n) NFS 会调用 READ(fh,offset,n) 返回结果给应用 最后应用调用 CLOSE(fd)
+- 为什么 NFS 不提供 OPEN 和 CLOSE 接口？
+
+  - 因为 OPEN 是有状态的 会创建类似于文件描述符的数据 而 LOOKUP 是无状态的 有状态会导致服务器重启后客户端的状态丢失 我们希望把状态保存在客户端 这也是为什么 READ 和 WRITE 多了一个 offset 参数 本质上就是把状态保存在客户端的 offset 中
+
+- 什么是 fh（file handler）？
+  - 本质上就是一个 remote file 的标识符
+  - 不能使用 fd 因为 fd 是有状态的
+  - 不能使用文件路径名 可能出现这种情况：客户端 1 打开文件 客户端 2 进行重命名 产生了不一致
+  - 不能使用 inode number 可能出现这种情况：客户端 1 打开文件 客户端 2 删除文件后创建文件 分配的 inode number 一样 客户端 1 就会访问到错误的文件 原本在单机文件系统中由于文件打开 inode number 不会释放后分配给新文件 这种情况就不会发生
+  - 因此 NFS 在 inode number 的基础上加了一个 generation number 相当于版本号 保证了文件的唯一性 以此作为 fh
+- READ 和 WRITE 为什么要用 offset？
+
+  - 为了实现幂等性
+  - 为了保证无状态的服务端 把状态保存在客户端
+
+- Performance Overheads
+
+  - 通常比本地文件系统慢 但不是绝对 和服务器性能与网络速度有关
+  - 优化
+    - 缓存到客户端 减少远程操作 或者服务端缓存到内存里 不过如何检测本地的缓存是否过期是个问题
+      - close-to-open consistency：关闭文件时写回到服务器 重新打开时再读取
+      - read/write consistency：读写时检查文件是否过期
+    - Read-ahead：预读取 读取一个文件时预读取后面的文件
+
+- Drawbacks
+  - Capacity：只能在单个服务器上放硬盘 无法扩展
+  - Reliability：服务器宕机后 NFS 无法使用
+  - Performance：单个服务器的带宽有上限
+
+### 如何把单机文件系统变成分布式文件系统？
+
+- Step 1：Distributed block layer
+  - 把 block_id 改为(block_id,mac_id)的形式
+  - 如何找到空闲的 block？用一个 master server 记录哪些 block 是空闲的 可以存在内存里
+- Step 2：Distributed file layer
+  - 几乎不用改 因为 block layer 已经解决了大部分问题
+- Step 3：Distributed inode number layer
+  - 同理 用 master server 记录 inode number 的分配情况
+- 后续层几乎不用改
+- 可以看到我们使用一个 master server 几乎解决了所有问题 但是这样会导致单点故障 性能瓶颈等问题
+- 使用主从复制 可以解决单点故障问题和读性能的提升
+
+### Case Study：GFS(Google File System)
+
+- GFS 采用了 master/slave 架构 一个 master 多个 chunk server
+- Why Large Chunks?
+  - 减少 master 的负担
+  - 减少TCP连接的数量
+  - 可以把元数据放在master的内存里
+

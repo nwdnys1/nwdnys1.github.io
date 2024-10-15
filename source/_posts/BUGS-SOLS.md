@@ -84,6 +84,10 @@ excerpt: " "
 
 - 沟槽的 openfeign：如果要使用 requestparam、pathvariable 注解 必须显式声明 value 否则无法解析
 
+## WebSocket
+
+- 注意第一次建立连接的请求看似是 ws 协议 实际上是 http 请求 后续升级为 ws 协议 部署到服务器后 由于 nginx 代理会把这个 http 请求转发给前端文件夹 需要进行配置转发 原理同后端的配置 主要是需要几个升级协议头 见：https://blog.csdn.net/wx_l617188072/article/details/134548473
+
 # 中间件
 
 ## Redis
