@@ -311,8 +311,30 @@ excerpt: " "
 ### Case Study：GFS(Google File System)
 
 - GFS 采用了 master/slave 架构 一个 master 多个 chunk server
-- Why Large Chunks?
+- 进行 replication 解决了容量 备灾和性能问题
+- Why Large Chunks（64MB）?
   - 减少 master 的负担
-  - 减少TCP连接的数量
-  - 可以把元数据放在master的内存里
+  - 减少 TCP 连接的数量
+  - 可以把元数据放在 master 的内存里
+- 新增了 append 和 snapshot 操作
+- 对于并发写 GFS 保证最终 chunk 的一致性 但是不保证读数据一定是最新的
+- GFS 会确定一个 primary chunk server 来确定每个写的顺序
+- 2 阶段写
+  1. 发送数据但不写入 获得复制的列表 chunkserver 会以链式的方式进行传输 比如 1 收到数据后传给 2 2 收到数据后传给 3
+  2. 发送请求给 primary chunk server 进行顺序的写入
+  - 这是一种数据流和控制流分离的设计 一阶段是数据流 二阶段是控制流
+- GFS 的重点之一是 append 即在文件末尾追加数据 希望并发的追加操作不会产生冲突 互相覆盖
+- GFS 的 naming 是单纯的 flat naming 没有目录结构
 
+## LEC 7: Key-Value Store
+
+### 
+
+- UPDATE为什么选择APPEND？
+  - 查找很慢
+  - 磁盘的顺序写很快 比随机访问快一个数量级
+  - DELETE同理 用一个标记位来标记删除
+
+- 这样的设计叫做Log-Structured 即日志结构化的设计 不断追加键值而不是修改
+
+- 为了加快查找速度 可以使用索引 
