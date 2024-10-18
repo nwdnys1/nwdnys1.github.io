@@ -1,3 +1,11 @@
+---
+title: 111
+date: 2024-09-07 23:42:00
+index_img:
+banner_img:
+excerpt: " "
+---
+
 # 人与组织的数据模型
 
 #### 引言
