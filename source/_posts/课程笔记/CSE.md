@@ -342,13 +342,85 @@ excerpt: " "
     - 覆写需要磁盘进行随机访问 速度很慢
     - 磁盘的顺序写很快 比随机访问快一个数量级
   - INSERT 同理也是在文件末尾追加 查询时从后往前查询
-  - DELETE 同理 用一个标记位来标记删除 比如null
-  - 这样的设计叫做 Log-Structured 即日志结构化的设计 特征是append-only
+  - DELETE 同理 用一个标记位来标记删除 比如 null
+  - 这样的设计叫做 Log-Structured 即日志结构化的设计 特征是 append-only
   - GET 操作需要从后往前查询 直到找到对应的键值对 线性复杂度 非常慢
-  - 使用INDEX来加速查询 记录key到文件offset的映射 可以使用B+树或者哈希表 查询速度可以达到O(logn)或O(1)
-  - 但是前提是INDEX要放在内存里 通常INDEX本身就会非常大 必须把INDEX放在磁盘里
-  - 使用Cuckoo Hashing 减少冲突 保证 O(1) 的查询时间 UPDATE也是O(1)的 但是INSERT需要驱逐 会涉及很多IO
-  - 无限制的增长会导致空间不够 使用compaction来合并相同键的值 回收过期的键值对
-  - 哈希难以支持范围搜索
+  - 使用 INDEX 来加速查询 记录 key 到文件 offset 的映射 可以使用 B+树或者哈希表 查询速度可以达到 O(logn)或 O(1)
+  - 但是前提是 INDEX 要放在内存里 通常 INDEX 本身就会非常大 必须把 INDEX 放在磁盘里
+  - 使用 Cuckoo Hashing 减少冲突 保证 O(1) 的查询时间 UPDATE 也是 O(1)的 但是 INSERT 需要驱逐 会涉及很多 IO
+  - 无限制的增长会导致空间不够 使用 compaction 来合并相同键的值 回收过期的键值对
 
+- 范围搜索：使用 B+ 树索引
 
+  - B+树的叶子是相连的 因此可以找到下限节点后顺序读
+  - B+树的 INSERT 和 UPDATE 是比较繁琐的 因此还是不宜使用
+
+- LSM 树（Log-Structured Merge Tree）
+
+  - SSTable：Sorted String Table
+    1. 在 SST 中搜索一个 key 是很高效的 因为 SST 是有序的
+    2. 支持范围搜索
+    3. 合并 SSTable 是很高效的 使用归并排序即可
+  - MemTable：内存中的表
+    1. 溢出后全部写入 SSTable
+  - Drawbacks
+
+    1. 查找旧值很慢 需要查找多个 SSTable
+    2. compact 很慢
+    3. 范围搜索仍然不快
+
+    解决方案：确保 SSTable 之间的 key 没有重叠 这样可以快速判断 key 是否存在这个 SSTable 中（判断 maxmin）
+
+  - Crash Recovery：维护 memtable 的 WAL（Write-Ahead Log）
+  - Write Stall：当写入一个值时 触发很多次 compaction 导致延迟变高
+  - Write Amplification：写放大 实际对于磁盘的写入量远远大于数据量
+  - 查找不存在的 key 很慢 因为要查找所有 SSTable 可以通过 Bloom Filter 来加速
+
+## LEC 8: Distributed Storage: Sequential Consistency
+
+### How to deploy a KVS?
+
+- 以微信为例 数据会部署在服务器和客户端上 就和我暑假做的日程 APP 一样 最大的重点是写时的数据同步
+
+#### Consistency Model
+
+- Strong Consistency
+  - 所有数据只有一个版本
+  - 读写等价于串行化的读写（线程之间的顺序可以不一样）
+  - 根据等价于哪种串行化 分为：
+    - Strict Consistency：串行化顺序符合发生时间顺序 没有人实现这种模型 因为会有网络延迟的区别 机器的时钟不同步等问题
+    - Sequential Consistency：对于各个线程内的操作 保证串行化顺序和发生时间顺序一致 对于不同线程则不保证
+    - Linearizability：如果 B 在 A 结束之后开始 串行化顺序中 B 一定在 A 之后
+- Release Consistency
+- Eventual Consistency：所有服务器的数据最终会达到一致
+
+#### 如何实现 Linearizability？
+
+- local property：如果一个数据的所有操作是线性化的 多个数据的操作组合也是线性化的
+- Primary-backup：对于写操作 primary 转发给所有 backup 全部写入后返回 最终在 primary 里写入 对于读 返回 primary 的数据 而不能读 backup 的数据 否则会产生不能线性化的情况
+- Partitioning：把不同数据分区到不同的 primary 上 来解决只有一个 primary 导致的性能瓶颈问题
+
+#### 如何实现 Eventual Consistency？
+
+- Write-write conflict：不同设备写入同一个数据产生冲突
+  - 为了合并冲突 需要 append 操作 使用 update function 可以定义任意的数据库操作
+  - 通过 Log 来统一不同设备间的操作顺序：在实际写入之前先写入 Log 同步 Log 之后排好序再执行实际写入
+  - 可以通过时间戳来排序 如果时间戳一致则比较设备 ID
+- 为了用户体验 需要在同步前先执行本地 UPDATE 这样会产生问题 如果本地更新失败了怎么办？可以使用 Rollback and Replay 来解决
+- Rollback and Replay：本地的 UPDATE 会记录状态 同步前 把所有本地的 UPDATE 回滚 然后把所有的 UPDATE 重新执行一遍 
+
+  问题在于如果时间久了 会有很多 UPDATE 需要回滚和重放 需要把 log 中 stable 的写提前 apply 到数据库中 减少回滚和重放的次数
+
+  如果上次同步时所有设备的时间戳都大于这个写的时间戳 则是 stable 的
+
+  Commit Scheme：一台primary服务器 分配一个全局的提交顺序
+- Causal Ordering：在一台机器上 A 发生早于 B 或者是 A 触发了 B 的操作（比如 A 是添加数据 B 是删除数据）则 A 和 B 有因果关系
+- Lamport Clock：每个操作都有一个时间戳 这个时间戳会保证 如果 A 是 B 的因 则 A 的时间戳小于 B 的时间戳
+
+  1. 每个服务器保留一个时钟 T
+  2. 随着时间的推移 T 会增加
+  3. 一旦收到一个请求 T’ 更新 T 为 max(T,T’+1) 也即保证时间戳大于已经发生的事件
+
+  - 问题
+    1. 时间戳可能成环 可以通过设备 ID 来解决
+    2. Partial Order：使用 Vector Clock 来解决 一个时间戳是一个向量 每个维度代表一个设备的时间戳 只有在所有维度上都大于时才大于 否则是不可比较的
