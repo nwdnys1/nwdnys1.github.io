@@ -522,6 +522,7 @@ excerpt: " "
   - FuzzyQuery：模糊查询
 
 - Scoring：对于一次查询 对所有文档进行相关性评分 来展示最相关的文档 可以通过 Score Boosting 来调整评分权重 有以下几种现有的评分算法
+
   - BM25：基于词频和文档频率的评分算法
   - TF-IDF：词频-逆文档频率 词频是指一个词在此文档中出现的次数 逆文档频率是指一个词在所有文档中出现的次数的倒数 人为的增加了一些权重和长度归一化（保证不同长短的文档具有公平性） 使得对一些无意义常见词的权重降低（比如“的”“是”等）
 
@@ -530,3 +531,99 @@ excerpt: " "
 #### Elasticsearch
 
 - 实时性好 字节目前在使用 原理是建立宽表 即关键字到 id 的反向索引
+
+## 10.28
+
+### Web Services
+
+#### Overview
+
+- Web 指 web 协议 Service 指无视 OS 和语言的服务 一个接口可以实现多种协议的服务
+
+#### SOAP
+
+- SOAP（Simple Object Access Protocol）：基于 XML 的协议 用于在网络上交换结构化的和类型化的信息 结构类似于下
+
+  ```xml
+  <soap:Envelope xmlns:soap="http://www.w3.org/2003/05/soap-envelope">
+    <soap:Header>
+    </soap:Header>
+    <soap:Body>
+      <m:GetStockPrice xmlns:m="http://www.example.com/stock">
+        <m:StockName>IBM</m:StockName>
+      </m:GetStockPrice>
+    </soap:Body>
+  </soap:Envelope>
+  ```
+
+  其中的 Envelope 是必须的 Header 是可选的 Body 是必须的
+
+- WSDL（Web Services Description Language）：描述 web 服务的接口和实现的 XML 文档 结构类似于下
+
+  ```xml
+  <definitions name="StockQuote"
+    targetNamespace="http://example.com/stockquote.wsdl"
+    xmlns="http://schemas.xmlsoap.org/wsdl/"
+    xmlns:soap="http://schemas.xmlsoap.org/wsdl/soap/"
+    xmlns:tns="http://example.com/stockquote.wsdl"
+    xmlns:xsd="http://www.w3.org/2001/XMLSchema">
+    <message name="GetLastTradePriceInput">
+      <part name="body" element="xsd:string"/>
+    </message>
+    <message name="GetLastTradePriceOutput">
+      <part name="body" element="xsd:string"/>
+    </message>
+    <portType name="StockQuotePortType">
+      <operation name="GetLastTradePrice">
+        <input message="tns:GetLastTradePriceInput"/>
+        <output message="tns:GetLastTradePriceOutput"/>
+      </operation>
+    </portType>
+    <binding name="StockQuoteSoapBinding" type="tns:StockQuotePortType">
+      <soap:binding style="document" transport="http://schemas.xmlsoap.org/soap/http"/>
+      <operation name="GetLastTradePrice">
+        <soap:operation soapAction="http://example.com/GetLastTradePrice"/>
+        <input>
+          <soap:body use="literal"/>
+        </input>
+        <output>
+          <soap:body use="literal"/>
+        </output>
+      </operation>
+    </binding>
+    <service name="StockQuoteService">
+      <port name="StockQuotePort" binding="tns:StockQuoteSoapBinding">
+        <soap:address location="http://example.com/stockquote"/>
+      </port>
+    </service>
+  </definitions>
+  ```
+
+  其中的 message 是消息的定义 portType 是接口的定义 binding 是绑定的定义 service 是服务的定义
+
+  - WSDL 会把一个接口暴露为一个服务 其他应用先获取 WSDL 来了解服务的参数、协议等信息 然后再调用服务
+  - 在 spring 中 可以使用`@WebService`注解来暴露一个服务 会在指定 url 暴露 WSDL 文件 消费者只需要 wsimport 即可在本地当做一个类来调用
+
+#### RESTful
+
+- REST（Representational State Transfer）：一种软件架构风格 设计风格而不是标准 通过 URI 来定位资源 通过 HTTP 方法来操作资源
+  - Representational：资源有不同的表示形式 每个资源都有一个唯一的 URI
+  - State：客户端的状态 即资源的表示形式 客户端自己维护
+  - Transfer：客户端的表示随着 URI 的变化而转移
+- How to Design RESTful API（CRUD）？用 method 来区分操作 用状态码来表示操作结果
+  - Create：POST
+  - Read：GET
+  - Update：PUT
+  - Delete：DELETE
+
+#### Trade-offs
+
+- Advantages of WS
+  - 跨平台
+  - 自描述性 使用 WSDL 可以很容易了解服务的参数和返回值
+  - 模块化
+  - 跨防火墙 通过 HTTP 和 HTTPS 可以穿透防火墙
+- Disadvantages of WS
+  - 低生产力 需要多写很多代码 不适合单机应用
+  - 低性能 需要封装和解析 而且是纯文本传输
+  - 不安全 需要HTTPS等其他方法
