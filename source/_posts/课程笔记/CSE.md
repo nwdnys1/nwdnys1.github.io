@@ -382,7 +382,7 @@ excerpt: " "
 
 - 以微信为例 数据会部署在服务器和客户端上 就和我暑假做的日程 APP 一样 最大的重点是写时的数据同步
 
-#### Consistency Model
+### Consistency Model
 
 - Strong Consistency
   - 所有数据只有一个版本
@@ -394,33 +394,115 @@ excerpt: " "
 - Release Consistency
 - Eventual Consistency：所有服务器的数据最终会达到一致
 
-#### 如何实现 Linearizability？
+### 如何实现 Linearizability？
 
 - local property：如果一个数据的所有操作是线性化的 多个数据的操作组合也是线性化的
 - Primary-backup：对于写操作 primary 转发给所有 backup 全部写入后返回 最终在 primary 里写入 对于读 返回 primary 的数据 而不能读 backup 的数据 否则会产生不能线性化的情况
 - Partitioning：把不同数据分区到不同的 primary 上 来解决只有一个 primary 导致的性能瓶颈问题
 
-#### 如何实现 Eventual Consistency？
+## LEC 9: Distributed Storage: Eventual Consistency
+
+### 如何实现 Eventual Consistency？
 
 - Write-write conflict：不同设备写入同一个数据产生冲突
   - 为了合并冲突 需要 append 操作 使用 update function 可以定义任意的数据库操作
   - 通过 Log 来统一不同设备间的操作顺序：在实际写入之前先写入 Log 同步 Log 之后排好序再执行实际写入
   - 可以通过时间戳来排序 如果时间戳一致则比较设备 ID
 - 为了用户体验 需要在同步前先执行本地 UPDATE 这样会产生问题 如果本地更新失败了怎么办？可以使用 Rollback and Replay 来解决
-- Rollback and Replay：本地的 UPDATE 会记录状态 同步前 把所有本地的 UPDATE 回滚 然后把所有的 UPDATE 重新执行一遍 
+- **Rollback and Replay（没听懂 10.24）**：本地的 UPDATE 会记录状态 同步前 把所有本地的 UPDATE 回滚 然后把所有的 UPDATE 重新执行一遍
 
   问题在于如果时间久了 会有很多 UPDATE 需要回滚和重放 需要把 log 中 stable 的写提前 apply 到数据库中 减少回滚和重放的次数
 
   如果上次同步时所有设备的时间戳都大于这个写的时间戳 则是 stable 的
 
-  Commit Scheme：一台primary服务器 分配一个全局的提交顺序
-- Causal Ordering：在一台机器上 A 发生早于 B 或者是 A 触发了 B 的操作（比如 A 是添加数据 B 是删除数据）则 A 和 B 有因果关系
-- Lamport Clock：每个操作都有一个时间戳 这个时间戳会保证 如果 A 是 B 的因 则 A 的时间戳小于 B 的时间戳
+- Commit Scheme：一台 primary 服务器 分配一个全局的提交顺序
 
-  1. 每个服务器保留一个时钟 T
-  2. 随着时间的推移 T 会增加
-  3. 一旦收到一个请求 T’ 更新 T 为 max(T,T’+1) 也即保证时间戳大于已经发生的事件
+- Causal Ordering：在一台机器上 A 发生早于 B 或者是 A 触发了 B 的操作（比如 A 是添加数据 B 是删除数据）则 A 和 B 有因果关系
+- Lamport Clock：每个操作都有一个时间戳 这个时间戳会保证 如果 A 是 B 的因 则 A 的时间戳小于 B 的时间戳 如果两个事件无因果关系（我们称其为并发事件） 则时间戳可能相等或无序
+
+  - 算法：
+
+    1. 每个服务器保留一个时钟 T
+    2. 随着时间的推移 T 会增加
+    3. 收到一条消息的时间戳为 T’ 则更新 T 为 max(T,T’+1) 也即保证时间戳大于已经发生的事件
 
   - 问题
-    1. 时间戳可能成环 可以通过设备 ID 来解决
-    2. Partial Order：使用 Vector Clock 来解决 一个时间戳是一个向量 每个维度代表一个设备的时间戳 只有在所有维度上都大于时才大于 否则是不可比较的
+
+    1. 时间戳可能相等 可以通过设备 ID 来解决
+    2. 事件 A 发生在事件 B 之前 => A 的时间戳小于 B 的时间戳 但是反之不一定成立 因为每个设备的时间戳是独立的 换言之 没有办法确定 A 和 B 是因果关系还是并发事件
+
+- Vector Clock：用一个 n 维向量来表示时间戳 每个维度代表一个设备的时间戳 T[i]严格大于（即每个维度都大于）T[j] 则 i 发生在 j 之后 若无法比较 则是并发事件
+
+  - 算法：
+
+    1. 若有 n 个设备 则每个设备有一个 n 维的向量代表时间戳
+    2. 每个设备的时间戳初始化为全 0 的向量
+    3. 事件 A 在设备 i 上发生时 设备 i 的时间戳的第 i 位加一
+    4. 设备 i 向设备 j 发送消息时 把自己的时间戳 W 发送给对方 设备 j 把第 k 位时钟 更新为 max(W[k],V[k] + 1)
+
+## LEC 10: Distributed Storage: All-or-nothing Atomicity
+
+### Consistency under single-machine faults
+
+- 任何调用都应该是 all-or-nothing 的 即要么全部成功 要么全部失败 否则会很难处理错误
+- 以 bank transfer 为例 数据的一致性即保持账户总额不变
+- 保持原子性的方法
+
+  - shadow copy：保证对于一个文件的修改是原子的 通过写入一个新文件 然后重命名的方式来实现 因为重命名是原子的 虽然不会导致数据不一致 但是文件系统有可能会不一致
+
+    Drawbacks：不支持并发 难以操作多文件 拷贝开销大
+
+  - journaling：上面的问题可以在 rename 之前写入 WAL 来解决 journaling 会导致极大的额外空间开销 所以可以只对 metadata 进行
+    - 如果在提交 journal 时崩溃怎么办（假设 journal 大于 sector size 所以写入并不是原子的）？
+  - Logging：可以见 AEA 事务笔记
+    - 日志会无限增长 所以还是需要截断 通过 checkpoint 机制：
+      1. 等到没有任何操作在进行（而不是等到所有事务结束）
+      2. 把 CKPT 记录到日志中 CKPT
+      3. 把所有内存中的数据写入磁盘
+      4. 丢弃除了 CKPT 之外的日志
+    - Undo-redo vs Redo-only vs Undo-only
+      - redo 的 log 内容少 所以性能会更好 redo 时也只需要扫一遍日志
+      - undo-redo 对于小内存比较差
+      - undo-only 几乎不会用到
+
+## LEC 11: Distributed Storage: Before-or-after Atomicity & 2PL
+
+- race condition：多个线程同时访问一个数据 由于操作包含多个步骤 会导致数据竞争
+- before-or-after atomicity：也叫 isolation 保证一组读写操作是原子的 不允许其他线程看到中间状态
+
+### Use Locks to achieve Isolation
+
+- 用全局锁可以严格保证原子性 但是会导致性能瓶颈 粒度太粗
+- 对于每一个数据加锁来减小粒度 然而没法保证类似于 transfer 操作的原子性 中间状态会被看到 解决方法：获取锁时固定顺序获取 先全部获取再释放 相当于一把大锁
+- 2PL（Two-Phase Locking）
+  - 每个数据有自己的锁
+  - 在需要操作数据之前再获取锁
+  - 所有释放延迟到一个完整的 action 结束后 而不是在每个数据操作后立即释放
+- 细粒度锁对于每一个数据加锁 但是通常数据量太大 可以把所有数据哈希到几个桶里 每个桶加一把锁
+
+### Before-or-after Atomicity 的严格定义
+
+- Serializability：一系列事务的操作等价于它们串行执行的结果
+  - Final State Serializability：最终状态等价于串行化的结果
+  - Conflict Serializability：最常用的
+  - View Serializability
+  - Confilct ∈ View ∈ Final State
+
+### Confilct Serializability
+
+- 2 opreations confilct if：
+
+  1. 操作了同一个数据
+  2. 至少有一个是写操作
+  3. 它们属于不同的事务
+
+- Conflict Serializability：如果 conflicts 的顺序和某一个串行化的顺序一致 则是 conflict serializable 的
+
+- Confilct Graph：每个节点是一个事务 如果 T1 和 T2 有冲突 且冲突的第一步是 T1 的操作 则有一条边从 T1 指向 T2
+  - 只要没有环 则进行线性化后 一个拓扑排序就是一个串行化的顺序 使得 schedule 是 conflict serializable 的
+  - 反之 如果有环 则一定不是 conflict serializable 的
+  - Conflict Equivalence：如果两个 schedule 的 conflict graph 是同构的 则是 conflict equivalent 的
+
+### View Serializability
+
+- View Serializability：如果最终的写状态和中间的读状态可以等价于某个串行化的结果 则是 view serializable 的
