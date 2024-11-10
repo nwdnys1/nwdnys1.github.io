@@ -505,4 +505,91 @@ excerpt: " "
 
 ### View Serializability
 
-- View Serializability：如果最终的写状态和中间的读状态可以等价于某个串行化的结果 则是 view serializable 的
+- 2 schedules S1 and S2 are view equivalent if：
+
+  1. Ti 在 S1 中读取了 X 的初始值 且在 S2 中也读取了 X 的初始值
+  2. Ti 在 S1 中读取了 Tj 的写入值 且在 S2 中也读取了 Tj 的写入值
+  3. Ti 在 S1 中写入了 X 的最终值 且在 S2 中也写入了 X 的最终值
+
+- View Serializability：如果一个顺序和某一个串行化顺序是 view equivalent 的 则它是 view serializable 的 这种情况其实是某些操作覆盖掉了其他操作的结果
+
+### Proof of 2PL
+
+- 2PL 保证了 conflict serializability 下面是证明：
+
+  1. 假设不是 conflict serializable 则存在一个 cycle T1 -> T2 -> ... -> Tk -> T1 设 Ti 和 Ti+1 间的冲突是对于变量 Xi 的
+  2. 根据 2PL 的定义 Ti 在操作变量 X 之前会获取锁 也就是说 T1 要获取 X1 的锁 T2 要获取 X1 和 X2 的锁 ... Tk 要获取 Xk-1 和 Xk 的锁 T1 要获取 Xk 的锁
+  3. T2 能拿到 X1 的锁是因为 T1 释放了 X1 的锁 因此 T1 必须在 T2 之前释放 X1 的锁 那么 T1 在获取 Xk 的锁之前释放了 X1 的锁 而 2PL 的定义是在所有操作结束后才释放锁 因此矛盾
+
+- 然而幻读现象是 2PL 情况下不满足 conflict serializability 的特例 只对于操作的数据上锁是不够的 还需要保证不加入任何新的数据
+
+  在这种情况下 冲突定义中的**数据项**指的是一个范围 而不是一个具体的数据项（比如满足大于 300 的所有数据） 只对于一个数据项加锁是不够的 需要对于整个范围加锁
+
+  解决方法包括：
+
+  - Predicate Locking：禁止其他事务插入符合条件的数据
+  - Range locks in B-Tree index：给 B-Tree 的索引加锁
+  - 或者干脆忽略
+
+- 总结：2PL 在锁可以解决冲突的情况下 可以保证 conflict serializability
+
+### Deadlock
+
+- 2PL 是悲观锁 仍有可能发生死锁
+- Methods to prevent deadlock：
+
+  1. 获取锁时按照一个固定的顺序获取
+     - 并不通用 许多事务并不能确定获取锁的顺序（比如从一个哈希表里获取数据）
+  2. 根据 conflict graph 来检测死锁：
+     - 如果有环 则有死锁
+     - 终止其中一个事务来断开环
+     - 但是检测时需要串行 具有高开销
+  3. 使用启发式算法来检测死锁 比如超时重试
+     - 可能会误判 或是活锁
+
+## LEC 12: Distributed Storage: Serializability, OCC & Transaction
+
+### OCC（Optimistic Concurrency Control）
+
+- 执行事务时不拿锁 在提交前检查是否有冲突 如果有则终止或重试
+- OCC Execute a TX in 3 steps：
+  1. Concurrent local processing（因为不拿锁 所以不能在原始数据上操作 而是在副本上操作）
+     - 把数据读取到 read set 里
+     - 写数据写到 write set 里 同时还要修改 read set 里的数据
+  2. Validation serializability in critical section
+     - 检查是否有 read set 里的数据被修改了 这里的检查可以使用版本号来防止 ABA 问题
+  3. Commit or abort in critical section
+     - 验证成功则提交 否则重试
+     - 验证失败则终止
+- Critical Section 指的是第 2、3 步也需要保证 before-or-after atomicity 可以通过对 set 上一把锁来实现 由于只在验证和提交时需要锁 因此不会产生性能瓶颈
+
+  然而在分布式的架构下 还是需要上细粒度锁来提高性能 既然上细粒度锁就会导致死锁 不过我们可以提前把 set 中的数据排序 保证获取锁的顺序是一致的
+
+  进一步优化 read set 中的数据如果最终没有被修改过 则自然是没有冲突的 可以不用上锁 反之如果被修改过 则不通过检查需要终止 也无所谓
+
+  但检查完 read set 后 还有可能被 write set 修改 为了避免这种情况 除了检查数据是否被修改 还要检查这个数据的锁是否被获取 如果被获取 意味着这个数据可能会在 write set 中被修改
+
+- False Aborts：OCC 检查有时会把满足conflict serializability 的事务终止 
+
+- livelock：当事务很大时 OCC会经常性的abort 从而导致事务在执行 但是却无法提交
+
+- 当并发事务数越多 OCC 的性能会越差 逐渐低于 2PL
+
+### Locking preliminary（这部分可以见上学期的ICS2）
+- CompareAndSwap：CAS 操作 保证原子性 
+
+### Transaction
+
+- HTM（Hardware Transactional Memory）：硬件事务内存
+  - 通过CPU硬件来保证事务的原子性
+  - 使用xbegin和xend指令来标记事务的开始和结束
+  - RTM（Restricted Transactional Memory）实际上是由OCC实现的 因此如果其他线程在事务中修改了数据 xbegin会返回失败
+
+
+- 
+  1. Optimize OCC 
+    - 获取开始时间戳
+    - 读取数据 需要读取到当前时间戳最近的snapshot
+    - 获取提交时间戳
+    - 提交write set 带上提交时间戳
+  - 为了保证写写的原子性 提交之前上锁 如果读取数据时有锁 则等待
