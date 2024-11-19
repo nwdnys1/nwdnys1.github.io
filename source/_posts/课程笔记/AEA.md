@@ -146,7 +146,7 @@ excerpt: " "
     - 用户会话保持的时间是一个状态 需要有状态的服务 使用默认的单例的话 每个用户获取到的 service 都是同一个实例 无法为每一个用户维护不同的状态 所以显然不用单例模式 同理的 如果选用 prototype 同一个用户每一次调用会获取到不同的服务 每次都会获得一个新的计时器 自然也不符合要求
     - 而既然要求一个会话维护一个状态 那么 session 作用域是最好的选择 即一个用户如果有新的会话 调用的 service 就会新创建一个实例 做到一次会话对应一个计时器对应一个状态 实现为每一次会话记录持续时间
   - Controller 层使用 session 的原因：
-    - 如果服务层使用了 session 作用域 而控制层却使用单例作用域 因为控制层只被创造一次 也就只进行一次依赖注入 也就是说控制层实际上只会调用同一个服务层实例 那么服务层的 session 作用域也就无效了 同理如果是 prototype 作用域 会出现多个 controller 实例注入了同一个服务层实例的问题 而且也没必要每次请求都创建新的控制层实例 所以也不妥
+    - 如果服务层使用了 session 作用域 而控制层却使用单例作用域 因为控制层只被创造一次 也就只进行一次依赖注入 也就是说控制层实际上只会调用同一个服务层实例 那么服务层的 session 作用域也就无效了 同理如果是 prototype 作用域 多个 controller 也只会调用同一个服务层实例 是没有必要的
     - 和服务层一样使用 session 作用域是最好的选择 同一个会话的所有请求对应控制层 这个控制层又会对应注入一个服务层
 
 ## 9.25
@@ -241,6 +241,7 @@ excerpt: " "
 - ws 是一个全双工的应用协议 即双向工作对等 底层是 TCP 协议
 
 - ws 应用会运行一个 endpoint 注册此 endpoint 的 uri 作为连接端点
+
 - 连接建立包含两部分 握手和数据传输 使用 GET 向 endpoint 进行请求 会进行协议的升级 握手后协议升级为 ws
 
 - 使用注解@ServerEndpoint 来注册一个 endpoint 作为服务端 OnOpen 函数中进行连接建立时的操作 OnMessage 函数进行收到消息时的操作 OnError、OnClose 同理
@@ -298,15 +299,15 @@ excerpt: " "
   - 未隔离的事务可能会出现以下问题
 
     - 脏读：事务 A 进行写入 写入过程中事务 B 读取到了未提交的数据 事务 A 后续进行了回滚 此时事务 B 读取到的数据就是不一致的
-    - 不可重复读：事务 A 读取第一次数据 之后事务 B 进行了写入 事务 A 再次读取数据时发现数据不一致
-    - 脏写：事务 A 进行写入 事务 B 也进行了写入 导致数据不一致
+    - 不可重复读：事务 A 读取第一次数据 之后事务 B 对同一个数据进行了写入 事务 A 再次读取数据时发现数据不一致
+    - 脏写：事务 A 进行写入 事务 B 也进行了写入 导致操作被覆盖
     - 幻读：事务 A 需要查询满足某些条件的数据 在查询一次后 事务 B 插入了一条新的符合条件的数据 导致事务 A 再次查询时发现数据增加了新的“幻影”数据行
 
   - 使用@Transactional 的 isolation 属性来设置隔离级别（从上到下隔离级别逐渐增高 常用可重复读）
     - READ_UNCOMMITTED：允许读取未提交的数据 会出现脏读、不可重复读、幻读
     - READ_COMMITTED：只能读取已提交的数据 避免了脏读 但是会出现不可重复读、幻读
-    - REPEATABLE_READ：确保同一事务内多次读取同一行数据是一致的 避免了脏读、不可重复读 但是会出现幻读
-    - SERIALIZABLE：事务完全串行化 避免了脏读、不可重复读、幻读 但是性能较差
+    - REPEATABLE_READ：确保同一事务内多次读取同一行数据是一致的（也即正在被读取的数据不能被修改）避免了脏读、不可重复读 但是会出现幻读
+    - SERIALIZABLE：事务完全串行化（为各个数据项上锁 甚至为表上锁）避免了脏读、不可重复读、幻读 但是性能较差
 
 - 多数据库的写入
 
@@ -316,7 +317,7 @@ excerpt: " "
 
   - 乐观离线锁：数据会被用户 session 读取后离线编辑 在写入更新数据时先查询数据的版本号 然后在更新时判断版本号是否一致 如果不一致说明基于旧数据进行了修改 则不进行更新 否则更新数据 并将版本号+1 适用于写远少于读的场景
   - 悲观离线锁：加上写锁 保证只有一个线程可以写入数据 适用于写入操作频繁的场景
-  - Coarse-Grained Lock：粗粒度锁 一次锁住多张关联的表
+  - Coarse-Grained Lock：粗粒度锁 一次锁住多个数据
     - 乐观锁：给关联的对象加上共享的版本号（可以是内存也可以持久化） 如果对象的版本号被修改 其关联的对象将不能写入
     - 悲观锁：给版本号上锁 保证只有一个线程可以写入
 
@@ -351,12 +352,14 @@ excerpt: " "
 - 数据库恢复机制：无非是单机多副本、主从复制、异地多机灾备等
 
 - 策略
+
   - 原子性
     - 窃取：未结束事务可以将脏页落盘 占用内存少 但是影响原子性 需要 undo log
     - 非窃取：未结束事务不能将脏页落盘 不影响原子性 占用内存多
   - 持久性
     - 强制：已完成事务必须落盘 不存在持久性问题 但是 IO 开销大
     - 非强制：已完成事务可以不落盘 但是可能会丢失数据 需要 redo log
+
 - 日志
 
   - redo 用于持久性 undo 用于原子性
@@ -371,8 +374,8 @@ excerpt: " "
     - 物理逻辑日志：记录数据页面的物理信息 但是记录的是逻辑操作
   - 日志的性质
     - 幂等性：重复执行不会产生不同的结果 逻辑日志不满足
-    - 失败可重做性：日志执行失败后 可以通过重做达成恢复 逻辑日志不满足
-    - 操作可逆性：逆向执行日志可以撤销操作 物理日志不满足
+    - 失败可重做性：日志执行失败后 可以通过重做达成恢复 逻辑日志不满足 因为一条逻辑记录可能对应多项数据修改 比如数据表和索引
+    - 操作可逆性：逆向执行日志可以撤销操作 物理日志不满足 因为数据页的偏移可能已经被修改 而物理逻辑日志可以通过页面前后指针来完成回滚
 
 ## 10.19
 
@@ -411,13 +414,13 @@ excerpt: " "
 
   - 死锁：两个线程互相等待对方释放锁
   - 饥饿：一个线程一直无法获取到锁
-  - 活锁：两个线程互相让步 但是都无法继续执行
+  - 活锁：两个线程因为不断响应而无法继续执行 并非阻塞
 
 - Guarded Blocks
 
   - 单纯使用 while 循环来判断条件 确保线程间的协调 然而会浪费资源
   - 更有效的方法是使用 wait 和 notify 来进行线程间的通信
-  - wait 会使当前线程等待 并释放所有锁 notifyAll 会唤醒所有等待的线程 并使得其中一个线程获得锁 以此进行线程间的通信
+  - wait 会使当前线程等待 并释放所有锁 notifyAll 会唤醒所有等待的线程 并使得其中一个线程获得锁 以此进行线程间的通信 常见的例子是生产者消费者模型 当队列为空 消费者等待 等生产者生产后通知消费者
 
 - Immutable Object：不可变对象 一旦创建就不能修改 适合多线程环境 因为不知道用户会如何读取数据 为了防止其他线程在读取时修改数据 只能把数据设为不可变 比如 final 和 private
 
@@ -494,24 +497,55 @@ excerpt: " "
 #### Lucene
 
 - Lucene 是一个 IR（Information Retrieval）工具包 提供了索引和搜索的功能 由 Apache 维护 适用于 Java 项目
+
 - Lucene 会为文本数据建立索引文档 存储到磁盘上 查询时搜索索引来找到文本数据
-- Lucene 的索引结构
+
+- Lucene 的索引文件结构（注意 文档相当于数据库的一行记录）
 
   - .fnm：<字段名，是否索引，是否向量化> 向量化是为了计算文档的相似度 实现这个字段的模糊匹配
   - .tis：<字段名，记录值，文档频率> 记录值是字段的值 文档频率是这个记录值在多少文档中出现过 每一条记录值指向.frq 文件里的多条记录
   - .frq：<文档 ID，出现频率> 每一条记录值指向.prx 文件里的多条记录
   - .prx：<位置>
 
-- 搜索的质量可以用召回率和准确率来衡量 召回率找到多少正确的结果 准确率找到的结果中有多少是正确的
+- 搜索的质量可以用召回率和准确率来衡量（recall & precision）
+
+  - 召回率=结果中正确的文档数/所有正确的文档数
+  - 准确率=结果中正确的文档数/结果中的文档数
+
 - Index Flie Formats
 
-  - Type：TextField、StringField 等
-  - Segments：分段的索引 每一个段都是一个独立的索引 可以用于分布式
+  - 基本概念
+
+    - Index：一组文档的集合
+    - Document：一条记录 由多个 field 组成
+    - Field：一个记录的某个字段 包含多个 terms
+    - Term：一个词 不同字段下的同一个词是不同的 term
+
+  - Inverted Index：倒排索引 指的是从 term 到 document 的映射 即一个 term 在哪些 doc 中出现过
+
+  - 一个 field 可以被 stored 或 indexed 如果被 indexed 可以被作为搜索的条件 如果被 stored 则在搜索出这个文档时 可以带上这个字段的值
+
+  - Types of Fields
+
+    - TextField：文本字段 会被分词器分词
+    - StringField：字符串字段 不会被分词器分词
+    - IntPoint
+    - LongPoint
+    - FloatPoint
+    - DoublePoint
+    - SortedDocValuesField：用于排序的字段 以下四个都是
+    - SortedSetDocValuesField
+    - NumericDocValuesField
+    - SortedNumericDocValuesField
+    - StoredField：存储字段 不会被索引
+
+  - Segments：index 太大时可以分段 分布式的存储到不同位置 比如可以按照某一个字段`time`来分段 查询时就可以剪枝 和数据库的分区类似
+
   - Document Number：文档的编号
 
 - Query
 
-  - TermQuery：单个字段、单个词的查询
+  - TermQuery：单个字段、单个 term 的查询 不可以再分词
   - BooleanQuery：多个查询的组合
   - PhraseQuery：短语查询 匹配多个 term 的序列
   - MultiPhraseQuery：多个短语的查询
@@ -521,16 +555,24 @@ excerpt: " "
   - RegexpQuery：正则表达式查询
   - FuzzyQuery：模糊查询
 
-- Scoring：对于一次查询 对所有文档进行相关性评分 来展示最相关的文档 可以通过 Score Boosting 来调整评分权重 有以下几种现有的评分算法
+- Scoring
 
-  - BM25：基于词频和文档频率的评分算法
-  - TF-IDF：词频-逆文档频率 词频是指一个词在此文档中出现的次数 逆文档频率是指一个词在所有文档中出现的次数的倒数 人为的增加了一些权重和长度归一化（保证不同长短的文档具有公平性） 使得对一些无意义常见词的权重降低（比如“的”“是”等）
+  - 对于一次查询 可以对查询结果中的文档进行相关性评分 来展示最相关的文档 Lucene 支持自定义评分的模型 下面是几种默认的算法
+    - BM25：基于词频和文档频率的评分算法
+    - TF-IDF：词频-逆文档频率
+      - 评分=(词频\*逆文档频率\*字段长度归一化\*字段权重)求和
+      - 词频是指一个词在此文档中出现的次数 比如 TOM 在 BOOK 中出现了 3 次 而 AND 在 BOOK 中出现了 30 次
+      - 逆文档频率是指一个词在所有文档中出现的次数的倒数 比如 BOOK 在所有的查询结果中一共出现了 1000 次 那么逆文档频率就是 1/1000
+      - IDF 相当于这个关键词的权重 一个关键词在所有文档中出现的次数越多 说明其对于查询的重要性越低 保证了一些常见词的权重降低
+      - 长度归一化（可选）是指对于不同长度的文档进行归一化 因为文档字段越长 容易出现关键词的次数越多 相当于词频变为了关键词出现的概率
+      - 字段 boost 权重（可选）是用户人为对于某一个字段的权重进行调整 比如 title 字段比较重要 可以给 title 字段的权重增加一些
+    - SimilarityBase：提供基类 用户可以继承这个类来实现自己的评分算法
 
 - SOLR：对于 Lucene 的封装 提供一个 web 页面平台进行手动搜索
 
 #### Elasticsearch
 
-- 实时性好 字节目前在使用 原理是建立宽表 即关键字到 id 的反向索引
+- 全文搜索 实时性好 字节目前在使用 原理是建立宽表 即关键字到 id 的反向索引
 
 ## 10.28
 
@@ -540,9 +582,9 @@ excerpt: " "
 
 - Web 指 web 协议 Service 指无视 OS 和语言的服务 一个接口可以实现多种协议的服务
 
-#### SOAP
+#### SOAP WS
 
-- SOAP（Simple Object Access Protocol）：基于 XML 的协议 用于在网络上交换结构化的和类型化的信息 结构类似于下
+- SOAP（Simple Object Access Protocol）：用于在网络上交换结构化的和类型化的信息 SOAP=XML+HTTP 即把 http 请求以 xml 格式发送
 
   ```xml
   <soap:Envelope xmlns:soap="http://www.w3.org/2003/05/soap-envelope">
@@ -601,16 +643,18 @@ excerpt: " "
 
   其中的 message 是消息的定义 portType 是接口的定义 binding 是绑定的定义 service 是服务的定义
 
-  - WSDL 会把一个接口暴露为一个服务 其他应用先获取 WSDL 来了解服务的参数、协议等信息 然后再调用服务
+  - 系统 B 将一个接口通过 WSDL 文件暴露在网络上 其同时会生成一个代理 负责将 SOAP 消息转换为调用接口的方法 系统 A 先获取 WSDL 文件 然后生产一个代理类 其负责将方法调用转换为 SOAP 消息 并发送给系统 B 得到 SOAP 消息后 代理类会将其转换为方法的返回值
+  - 通常 SOAP 消息是通过 HTTP 的 POST 请求发送的 请求体内是一个 XML 文件
   - 在 spring 中 可以使用`@WebService`注解来暴露一个服务 会在指定 url 暴露 WSDL 文件 消费者只需要 wsimport 即可在本地当做一个类来调用
 
-#### RESTful
+#### RESTful WS
 
 - REST（Representational State Transfer）：一种软件架构风格 设计风格而不是标准 通过 URI 来定位资源 通过 HTTP 方法来操作资源
   - Representational：资源有不同的表示形式 每个资源都有一个唯一的 URI
   - State：客户端的状态 即资源的表示形式 客户端自己维护
   - Transfer：客户端的表示随着 URI 的变化而转移
-- How to Design RESTful API（CRUD）？用 method 来区分操作 用状态码来表示操作结果
+- How to Design RESTful API（CRUD）？
+  - 用 method 来区分操作 用状态码来表示操作结果
   - Create：POST
   - Read：GET
   - Update：PUT
@@ -625,7 +669,7 @@ excerpt: " "
   - 跨防火墙 通过 HTTP 和 HTTPS 可以穿透防火墙
 - Disadvantages of WS
   - 低生产力 需要多写很多代码 不适合单机应用
-  - 低性能 需要封装和解析 而且是纯文本传输
+  - 低性能 需要封装和解析 而且是纯文本传输 浪费带宽
   - 不安全 需要 HTTPS 等其他方法
 
 ## 10.30
@@ -803,3 +847,291 @@ excerpt: " "
 - `innodb_page_cleaners`：将脏页落盘的清理线程数量 默认是 4 不会超过缓存池的实例数
 - `innodb_max_dirty_pages_pct_lwm`：脏页的最大比例 默认是 10% 会触发脏页的清理
 - 为了减少 warm-up 的时间 InnoDB 会把缓存池中最常用的页存到磁盘上 并在重启时直接 restore 到缓存池里 持久化的比例由`innodb_buffer_pool_dump_pct`决定 默认是 25%
+
+## 11.11
+
+### MySQL Backup and Recovery
+
+#### Backup and Recovery Types
+
+- Physical Backup：备份整个数据库的文件（.MYD、.MYI） 适合大型数据库 恢复速度快
+- Logical Backup：备份数据库的逻辑结构 适合小型数据库 可以导入到其他 SQL 数据库中
+- Online Backup：备份时数据库仍然在运行 会出现备份同时写入的问题 需要锁来保证一致性
+- Offline Backup：备份时数据库停止运行 影响用户体验 一般数据量小
+- Warm Backup：备份时数据库仍然在运行 但是禁止写入
+- Local Backup：本地备份
+- Remote Backup：远程控制机器进行备份
+- Snapshot Backup：快照备份 增量备份的一种 通过 COW 来记录每一次修改 当改变达到阈值后进行一次全量备份 MySQL 本身不支持 必须使用 LVM 或者 ZFS 等文件系统
+- Full/Increment Backup：启动 MySQL 的 binlog 功能 可以记录每一次修改的日志 通过备份时的 binlog 来进行增量备份
+
+#### Database Backup Methods
+
+- 建议选择企业版的 MySQL 默认是物理备份和热备份
+- 如果使用社区版：
+  - 逻辑备份可以用 mysqldump 来实现 使用`--single-transaction`参数可以在备份时不锁表 可读不可写
+  - 物理备份时需要保证内存落盘 使用`FLUSH TABLES tbl list WITH READ LOCK`来落盘 同时上锁 可读不可写
+  - 使用`--tab`参数可以额外导出一个 csv 文件 使用`SELECT * INTO OUTFILE 'file_name' FROM tbl_name`可以导出文本文件
+  - MySQL 支持使用 binary log 来进行增量备份 当进行全量备份时 使用`FLUSH LOGS`来落盘之前的 binlog
+  - 使用主从复制 老生常谈了 不赘述 主要是备份方法时切换到从库上进行备份
+  - 如果使用 MyISAM 可以使用`REPAIR TABLE`来修复表
+
+#### An Example of Backup and Recovery
+
+- 遇到断电或操作系统宕机时 我们可以认为磁盘数据是安全的 此时 InnoDB 会自动对 log 进行恢复
+- 文件系统崩溃或其他硬件问题 导致磁盘数据损坏 需要格式化磁盘 并且需要从备份中恢复
+- 假如每周日的 1 点进行一次全量备份 使用`mysqldump --all-databases --master-data --single-transaction > backup_{date}.sql`指令 产生的文件就可以用于恢复 这个备份操作需要一个所有表上的全局读锁
+- 使用`--log-bin`启用 binlog 功能 binlog 会定期截断 `--delete-master-logs`可以在全量备份时删除旧的 binlog
+- 假如周三的 8 点遇到了灾难 先恢复到周日 1 点的状态 然后使用`mysqlbinlog gbichot2-bin.000001 gbichot2-bin.000002 | mysql`来恢复 假如一个 binlog 是一天 现在恢复到了周二 1 点的状态
+- 最后使用`mysqlbinlog gbichot2-bin.000003 ... | mysql`来恢复到周三 8 点的状态 `...`表示周二 1 点到周三 8 点的所有 binlog 文件
+- 日志和备份应该存储在和数据库不同的地方 保证安全
+- 总结：
+  - 若数据库未损坏 InnoDB 会自动使用 log 进行恢复
+  - 若数据库损坏 使用以下策略防止数据丢失
+    1. 启用 binlog 来进行增量备份
+    2. 使用 mysqldump 来进行定期的全量备份
+    3. 使用`FLUSH LOGS`来定期把 binlog 落盘
+
+#### mysqldump for Backups
+
+- dump 文件可以用于恢复数据库 也可以用于主从复制 也可以用于实验
+- `--tab`会多生成一个 csv 文件
+- 各种指令用法详见 ppt
+
+#### Point-in-Time Recovery
+
+- PITR 是指恢复数据库到某个时间点的状态
+- 注意 mysqlbinlog 不应该起多个线程并行执行多个 binlog 内的语句之间可能会有依赖关系 正确做法是在一条指令内执行多个 binlog
+- 使用`--start-datetime`和`--stop-datetime`来查看小时间段内的 binlog 找到需要的 position
+- 使用`--start-position`和`--stop-position`来指定恢复的范围 可以跳过一部分 binlog 这样就可以跳过某些失误的操作
+
+## 11.13
+
+### MySQL partitioning
+
+#### Partitioning Types
+
+- Range Partitioning：根据某个字段的范围来分区 即连续值
+
+  - RANGE 分区示例如下 创建了一个根据 joined 字段的 YEAR 来分区的表 范围规定必须为是单边开区间 方便后续添加新的分区和删除旧的分区进行合并 并且范围是连续升序的
+
+  ```sql
+  CREATE TABLE employees (
+    id INT NOT NULL,
+    fname VARCHAR(30),
+    lname VARCHAR(30),
+    hired DATE NOT NULL DEFAULT '1970-01-01',
+    separated DATE NOT NULL DEFAULT '9999-12-31',
+    job_code INT NOT NULL,
+    store_id INT NOT NULL
+  )
+  PARTITION BY RANGE (YEAR(joined)) (
+    PARTITION p0 VALUES LESS THAN (1991),
+    PARTITION p1 VALUES LESS THAN (1996),
+    PARTITION p2 VALUES LESS THAN (2001),
+    PARTITION p3 VALUES LESS THAN MAXVALUE
+  );
+  ```
+
+  - RANGE 也可以在多列上进行分区 比如`PARTITION BY RANGE COLUMNS (a, b, c)` 先比较 a 如果相等再比较 b 如果相等再比较 c
+  - NULL 值会被放到最小的分区中
+
+- List Partitioning：根据某个字段的值来分区 即离散值
+
+  - LIST 分区示例如下 创建了一个根据 region 字段的值来分区的表
+
+  ```sql
+  CREATE TABLE employees (
+    id INT NOT NULL,
+    fname VARCHAR(30),
+    lname VARCHAR(30),
+    hired DATE NOT NULL DEFAULT '1970-01-01',
+    separated DATE NOT NULL DEFAULT '9999-12-31',
+    job_code INT NOT NULL,
+    store_id INT NOT NULL,
+    region VARCHAR(10)
+  )
+  PARTITION BY LIST (region) (
+    PARTITION pNorth VALUES IN ('NORTH'),
+    PARTITION pSouth VALUES IN ('SOUTH'),
+    PARTITION pEast VALUES IN ('EAST'),
+    PARTITION pWest VALUES IN ('WEST')
+  );
+  ```
+
+  - `INSERT IGNORE INTO employees VALUES` 会忽略插入失败的数据 只插入属于某个分区的数据
+  - 想要插入不属于任何分区的数据 可以使用`PARTITION pOther VALUES IN (DEFAULT)`来插入
+  - NULL 会被当做某一个离散值来处理 如果没有对应的分区则会插入失败
+  - RANGE 和 LIST 分区支持以下类型
+    - 所有整数类型 包括 TINYINT、SMALLINT、MEDIUMINT、INT、BIGINT 不支持 FLOAT 和 DECIMAL 类型
+    - 所有日期和时间类型 包括 DATE、DATETIME、TIMESTAMP、TIME、YEAR
+    - 所有字符串类型 包括 CHAR、VARCHAR、BINARY、VARBINARY 不支持 TEXT 和 BLOB 类型 因为是指针
+
+- Hash Partitioning：根据某个字段的哈希值来分区 由用户定义
+
+  - HASH 分区示例如下 创建了一个根据 id 字段的哈希值来分区的表 哈希函数是对于分区数取模
+
+  ```sql
+  CREATE TABLE employees (
+    id INT NOT NULL,
+    fname VARCHAR(30),
+    lname VARCHAR(30),
+    hired DATE NOT NULL DEFAULT '1970-01-01',
+    separated DATE NOT NULL DEFAULT '9999-12-31',
+    job_code INT NOT NULL,
+    store_id INT NOT NULL
+  )
+  PARTITION BY HASH (id)
+  PARTITIONS 4;
+  ```
+
+  - 哈希函数也可以使用线性哈希函数 其扩展分区时需要迁移的数据较少 使用`LINEAR HASH`来指定
+  - NULL 会被当做 0 来处理
+
+- Key Partitioning：根据某个字段的哈希值来分区 由 mysql 定义
+
+  - KEY 分区示例如下 创建了一个根据 id 字段的哈希值来分区的表 不指定列则会取主键
+
+  ```sql
+  CREATE TABLE employees (
+    id INT NOT NULL,
+    fname VARCHAR(30),
+    lname VARCHAR(30),
+    hired DATE NOT NULL DEFAULT '1970-01-01',
+    separated DATE NOT NULL DEFAULT '9999-12-31',
+    job_code INT NOT NULL,
+    store_id INT NOT NULL
+  )
+  PARTITION BY KEY (id)
+  PARTITIONS 4;
+  ```
+
+  - 也可以使用`LINEAR KEY`来指定线性哈希函数
+  - NULL 会被当做 0 来处理
+
+- Subpartitioning：在分区内再根据某个字段进行分区 示例如下 先按照年份分区 每个年分区里按照天数继续分区
+
+  ```sql
+  CREATE TABLE employees (
+    id INT NOT NULL,
+    fname VARCHAR(30),
+    lname VARCHAR(30),
+    hired DATE NOT NULL DEFAULT '1970-01-01',
+    separated DATE NOT NULL DEFAULT '9999-12-31',
+    job_code INT NOT NULL,
+    store_id INT NOT NULL
+  )
+  PARTITION BY RANGE (YEAR(joined))
+  SUBPARTITION BY HASH (TO_DAYS(joined))
+  SUBPARTITIONS 4 (
+    PARTITION p0 VALUES LESS THAN (1991),
+    PARTITION p1 VALUES LESS THAN (1996),
+    PARTITION p2 VALUES LESS THAN (2001),
+    PARTITION p3 VALUES LESS THAN MAXVALUE
+  );
+  ```
+
+  - 也可以直接声明子分区数量和名称 形如
+
+  ```sql
+  PARTITION BY RANGE (YEAR(joined))
+  SUBPARTITION BY HASH (TO_DAYS(joined))(
+    PARTITION p0 VALUES LESS THAN (1991)(
+      SUBPARTITION s0,
+      SUBPARTITION s1,
+      SUBPARTITION s2,
+      SUBPARTITION s3
+    ),
+    ......
+  );
+  ```
+
+#### Partitioning Management
+
+- `ALTER TABLE employees PARTITION BY RANGE (YEAR(joined)) PARTITIONS 4;`会重新分区 但是会把数据全部拷贝一遍
+- RANGE 分区的范围应该尽量和未来的查询范围相匹配 使得查询可以在一个分区内完成
+- `ALTER TABLE employees DROP PARTITION p0;`会删除分区以及其数据 分区的范围仍然会保留连续性
+- `ALTER TABLE employees ADD PARTITION (PARTITION p0 VALUES LESS THAN (1991));`会添加一个新的分区 范围必须大于已有的分区 对于 LIST 则不能重复
+- `ALTER TABLE employees REORGANIZE PARTITION p0 INTO (PARTITION p0 VALUES LESS THAN (1991), PARTITION p1 VALUES LESS THAN (1996));`会重新组织分区 可以分裂分区 也可以合并分区
+- HASH 和 KEY 不允许删除分区 因为数据会被重新分布 但是可以合并分区 使用`ALTER TABLE employees COALESCE PARTITION 4;`来合并分区
+- `ALTER TABLE employees EXCHANGE PARTITION p0 WITH TABLE employees_archive;`会用分区交换表 但是表的结构必须和分区的结构一样 也不能有外键约束 不能有分区 表内不能有分区外的数据 加上`WITHOUT VALIDATION`可以跳过分区范围的检查 但是会真的插入不合法的数据 需要后续手动检查
+- 还有很多指令可以维护分区表
+  - REBUILD PARTITION
+  - OPTIMIZE PARTITION
+  - ANALYZE PARTITION
+  - REPAIR PARTITION
+  - CHECK PARTITION
+
+#### Partitioning Pruning
+
+- MySQL 中的 query plan 会自动根据分区的范围来进行分区裁剪 从而减少查询的开销
+- 不只 SELECT 语句 也包括 UPDATE 和 DELETE 等语句
+- 因此分区逻辑应该尽量和查询逻辑相匹配 使得查询可以在一个分区内完成
+
+## 11.18
+
+### MongoDB & NoSQL
+
+- 为什么需要 NoSQL
+  - 数据量超过 10M 后 RDBMS 的性能会急剧下降 因为 B+树的深度会增加
+  - RDBMS 无法处理非结构化数据 比如一篇文章的内容
+- Big Data
+  - 结构化数据 尤其是轻量级的数据 非常适合使用 RDBMS
+  - 半结构化数据 比如 JSON XML 等
+  - 非结构化数据 比如图片、视频、音频、文本等
+- RDBMS
+  - 数据量：在 GB 级别
+  - 访问方式：交互式 批处理比较难
+  - 结构：固定的 schema
+  - 约束：强约束
+  - 扩展：非线性的扩展性能
+
+#### MongoDB
+
+##### Basic Concepts
+
+- Document：类似于 JSON 的数据结构 由键值对组成
+  - 每一个文档都有一个唯一的 `_id` 字段+
+  - 键的顺序会区分不同的文档
+  - 键不能包含`.` `$` `null` 且不能是空字符串 且不能是`_`开头的保留字
+  - 键值是类型敏感和大小写敏感的
+- Collection：类似于表 由多个 Document 组成
+  - schema-free：不对文档的结构做任何限制
+  - 文档的分表需要遵循 data-locality 原则，即相关的文档应该存储在一起
+  - Subcollection：类似于垂直分表 但是表之间不会有任何关联
+- Database：类似于数据库 由多个 Collection 组成
+  - 不同的数据库会被存储到不同文件
+  - 保留数据库
+    - admin：存储用户信息
+    - local：存储本地数据 不会被复制
+    - config：存储分片信息 用于剪枝 因为 sharding 是按`_id`来分片的
+- 基本命令
+  - `show dbs`：显示所有数据库
+  - `use db_name`：切换数据库
+  - `show collections`：显示所有集合
+  - `db.collection_name.find()`：显示所有文档
+  - `db.collection_name.find({key: value})`：显示符合条件的文档
+  - `db.collection_name.insertOne({key: value})`：插入一个文档
+  - `db.collection_name.insertMany([{key: value}, {key: value}])`：插入多个文档
+  - `db.collection_name.updateOne({key: value}, {$set: {key: value}})`：更新一个文档
+  - `db.collection_name.updateMany({key: value}, {$set: {key: value}})`：更新多个文档
+  - `db.collection_name.replaceOne({key: value}, {key: value})`：替换一个文档
+  - `db.collection_name.deleteOne({key: value})`：删除一个文档
+  - `db.collection_name.deleteMany({key: value})`：删除多个文档
+  - `db.collection_name.aggregate([stage1, stage2, ...])`：聚合查询 可以进行统计、分组、排序等操作
+  - `db.collection_name.drop()`：删除一个集合
+  - `db.dropDatabase()`：删除一个数据库
+
+##### Spring with MongoDB
+
+- 需要导入 spring-boot-starter-data-mongodb 依赖
+- 需要在配置文件中配置 MongoDB 的连接信息：`spring.data.mongodb.uri=mongodb://localhost:27017/test`
+- 需要在实体类上加上`@Document`注解
+- 需要在 DAO 层继承 MongoRepository 接口
+- 结合 JPA 时 将不需要 JPA 维护的字段加上`@Transient`注解
+
+##### Indexing
+
+- Normal Index：`db.collection_name.createIndex({key: 1})`：升序索引 `db.collection_name.createIndex({key: -1})`：降序索引
+- Geospatial Index：`db.collection_name.createIndex({key: "2dsphere"})`：地理位置索引 值需要是含两个数值的数组
+
+- 上述索引都可以在 Mongo Compass 中进行可视化创建
