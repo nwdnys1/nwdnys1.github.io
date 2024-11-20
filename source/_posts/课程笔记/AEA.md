@@ -1135,3 +1135,74 @@ excerpt: " "
 - Geospatial Index：`db.collection_name.createIndex({key: "2dsphere"})`：地理位置索引 值需要是含两个数值的数组
 
 - 上述索引都可以在 Mongo Compass 中进行可视化创建
+
+## 11.20
+
+### MongoDB
+
+#### AUTO Sharding
+
+- MongoDB 将 collection 分为小的 chunks 称为 shards
+- 由于 MongoDB 的分片是自动的 用户无需关心数据的分布 数据库会为每个分片的 collection 创建一个 router 存储分片的元数据
+- 当添加或减少 shard 时 MongoDB 会自动迁移数据 使得数据均匀分布
+  - shard 是一个服务器节点上的分片 一个 shard 包含多个 chunk MongoDB 会限制每个 shard 之间的 chunk 数量不能超过一定的阈值
+  - 用户选择用来分片的字段称为 shard key 按照 shard key 的值范围 数据会分为不同 chunk 当一个 chunk 的数据量超过阈值时 MongoDB 会自动分裂这个 chunk 并且把新的 chunk 迁移到其他 shard 上
+  - 新添加一个 shard 时 MongoDB 会把一部分 chunk 迁移到新的 shard 上 删除同理
+  - 有时不希望数据均匀存储 可以关闭 chunk 数量的限制 改用自己写的 balancer 保证数据访问的均衡
+
+### Neo4j & Graph Computing
+
+- 一个异构图中的节点和边可以有不同的属性 在 ORM 中节点就是实体 边就是关系
+- 关系型数据库的 join 操作是 O(n^2) 的 复杂度太高 导致某些关系复杂的查询涉及到大量的表连接 非常耗时
+- 非关系型数据库虽然可以通过嵌套或引用来解决正向的 join 但是没办法进行反向映射
+- 在图数据库里 这样的关系查询都可以转换为图的遍历操作 从而大大降低复杂度
+
+#### Neo4j
+
+- Cypher：Neo4j 的查询语言
+
+  - Neo4j 中使用 ascii 码描述图的结构 比如`(John:Person {name: "John"})-[KNOWS]->(Mary:Person {name: "Mary"})-[:KNOWS]->(John)`表示 John 和 Mary 之间互相认识 其中`Person`是节点的标签`KNOWS`是边的标签 `John`是节点的引用
+  - `MATCH (n:Person)-[:KNOWS]->(m:Person) RETURN n, m`表示查询所有认识的人
+
+- Neo4j 的数据模型
+
+  - 节点对应于实体 边对应于关系
+  - 有时复合关系可以用一个节点来表示 一个点赞关系可以用一个点赞节点来表示
+
+- Neo4j 的使用
+
+  - 可以单机部署 也可以集群部署 也可以嵌入到 Spring Boot 中
+  - 需要导入 spring-boot-starter-data-neo4j 依赖
+  - 需要在配置文件中配置 Neo4j 的连接信息：`spring.data.neo4j.uri=bolt://localhost:7687`
+  - 需要在实体类上加上`@NodeEntity`注解
+  - 使用`@Relationship`注解来表示关系
+
+- Internals
+
+  - Neo4j 中 节点和边分开存储
+  - 节点占 15 Bytes
+    - inUse：是否被使用 (1 Byte)
+    - nextRelId：第一条边的 ID (4 Bytes)
+    - nextPropId：第一个属性的 ID (4 Bytes)
+    - labels：节点的标签 (5 Bytes)
+    - extra： (1 Byte)
+  - 边占 34 Bytes
+    - inUse：是否被使用 (1 Byte)
+    - firstNode：起始节点的 ID(4 Bytes)
+    - secondNode：终止节点的 ID (4 Bytes)
+    - relationshipType：关系的类型 (4 Bytes)
+    - firstPrevRelId：起始节点的前一条边的 ID (4 Bytes)
+    - firstNextRelId：起始节点的后一条边的 ID (4 Bytes)
+    - secondPrevRelId：终止节点的前一条边的 ID (4 Bytes)
+    - secondNextRelId：终止节点的后一条边的 ID (4 Bytes)
+    - nextPropId：第一个属性的 ID (4 Bytes)
+    - firstInChainMarker： (1 Byte)
+
+- Neo4j 嵌入到 Spring Boot 中
+
+  - 在一些图计算中会用到 比如识别银行转账的洗钱行为 需要图神经网络来识别
+
+- Summary
+  - Neo4j 是一个图数据库
+  - 提供不同语言的 Driver
+  - 提供 Neo4j Browser 可视化工具

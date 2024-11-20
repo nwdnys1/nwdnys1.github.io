@@ -64,11 +64,15 @@ excerpt: " "
   - 当然 如果没有网络故障 CAP 还是可以达到的 理论只是告诉你一个分布式系统不可能永远保持 CAP
 
 - 分布式系统需要哪些属性（审视系统的五个维度）？
+
   1. 可扩展性
   2. 性能
   3. 故障容忍度
   4. 一致性
   5. 易用性
+
+- 可用性和可靠性
+  ![](https://image.blog.nwdnysl.site/a35881e330d0ef3e985cd7eeda006ce-8d2db5a39f9368ae7314306dabd1078a.png)
 
 ## LEC 3: File System 1
 
@@ -95,6 +99,7 @@ excerpt: " "
     - 一个文件拥有一个 inode（index node）其会存储文件的元数据 包括这个文件有哪些块以及 file 的 size
     - 提供的映射是 inode 中的 block index 到 disk 上的 block number 比如 inode-1 的第 3 个 block 对应的 block number 是 178 利用这个映射 就可以实现从 inode offset 到 block data 的映射
     - inode 对于大文件来说会很大 所以会做多层映射（类似多级页表）也就是 inode 指向另一个 inode
+      ![](https://image.blog.nwdnysl.site/28260098dd030d051d78ed86c64ed95-a639d84c28f8bea9751e0d05e11b4405.png)
 
   - L3：Inode Number 层
 
@@ -105,6 +110,8 @@ excerpt: " "
 
     - 已经可以提供 inode number 到 block data 的映射 比如 inode number 为 1、offset 为 4096 的 block 是哪个
     - 已经足以用于操作文件 但是使用 inode number 操作对于用户不友好 并且在不同的设备上 inode number 会不同 因此引入了文件名
+    - 数据分布图
+      ![](https://image.blog.nwdnysl.site/d4115c80d298d879660f6c72083863a-e80cf83af3d31c01c3ad512c61e9a4a2.png)
 
   - L4：File Name 层
 
@@ -120,18 +127,24 @@ excerpt: " "
     - LINK 指令可以为文件创建一个快捷方式 不能为文件夹创建快捷方式 因为会导致环路 这两个文件名指向同一个 inode number `.`和`..`都是硬链接
     - UNLINK 指令会溢出一个文件名到 inode number 的连接 如果这是最后一个连接 那么就会释放 inode 和 blocks 因此需要一个 refcnt 记录 inode 有多少个连接
     - RENAME
+
       1. 先 unlink to_name 然后 link from_name 到 to_name 最后 unlink from_name 通常会在 tmp 文件里操作 如果中途崩溃 to_name 就会丢失 需要原子性
       2. 抛弃第一步 unlink to_name 这样即使中途崩溃 to_name 也不会丢失
+
+      ![](https://image.blog.nwdnysl.site/e7467e6c3a156e34ea5a788a1bba2a8-617e698c43e7c3b1c4adb66934a50896.png)
 
   - L6：Absolute path name 层
 
     - 每个用户都有自己的 pwd 也就是 home 但是不同用户无法访问其他用户的文件 为此引入了根目录`/` 根目录的 inode number 为 1
+    - 如何找到一个文件
+      ![](https://image.blog.nwdnysl.site/94f2e65ce0c5ff408ec6ff450b2efe0-fcaf4f93ce29b54f44cbfe9400d77af0.png)
 
   - L7：Symbolic Link 层（软链接）
 
     - 不同的磁盘上 inode number 会不同 为了能够访问其他磁盘的文件 引入软链接
     - 硬链接指向了 inode 而软链接记录了路径这个字符串 因此文件即使不存在也可以创建软链接
     - bash 在 cd 一个软链接后 会自动记住旧的 pwd 从而`cd ..`可以回到原来的目录 如果需要真正的上级目录 可以使用`cd -P ..` 会回到新的 pwd 的上级目录
+    - LINK 不能成环 ![](https://image.blog.nwdnysl.site/2f0ca416a0b5341bbd228b92aaf3951-5b6fc8a803eb3b2a18f3eb84ede9d3ba.png)
 
 - Summary
   - 文件名不是文件的一部分 而是存在 directory 里的一个字符串 正因此 重命名实际上只能通过创建新文件来实现
@@ -172,11 +185,15 @@ excerpt: " "
 
   - 根据 fd 找到 file_table 中的 inode 修改 inode 的 atime 读取 block data 到 buffer 里 最后修改 cursor
   - 由于每次 read 都会导致对于 inode 的写（要修改 atime）linux 提供参数 no-atime 使得当最后关闭文件时才进行修改
+  - READ 的过程
+    ![](https://image.blog.nwdnysl.site/a0215d8cccc2d6e73c8a49b51b11413-87429bea803c8909807b6f21cf8c5109.png)
 
 - WRITE
 
   - 与 READ 类似 分配新的 block 并写入数据 修改 inode 的 mtime 和 size
   - 写时顺序应该采用更新 block bitmap、写入新数据、更新 inode 虽然此种顺序在极端情况下会产生硬盘浪费 但是可以通过扫描磁盘来恢复 在写入数据前就更新 inode 会导致其指向一块已经被删除的数据 从而导致数据泄露
+  - WRITE 的过程
+    ![](https://image.blog.nwdnysl.site/1defd9af643cf7fb89a3b627814a2f4-df08938a29f2e1765bc2fec9f8cf1c78.png)
 
 - APPEND
 
@@ -223,6 +240,7 @@ excerpt: " "
     - 将结果放入响应
     - 发送响应
   - 通过 stub 我们在不修改原来函数的情况下实现了远程调用
+  - 一次 RPC 调用：![](https://image.blog.nwdnysl.site/ee6934bce9d4e6ba8bacf78d401134f-5711d9ace6572de534c41fec3602fc5e.png)
 
 - 客户端和服务器通过 message 来通信
 
@@ -395,6 +413,8 @@ excerpt: " "
     1. client 获得 repicas 的列表 确定好 primary 然后 chunkserver 以链式转发的方式进行传输 比如 1 收到数据后传给 2 2 收到数据后传给 3 这些数据会被缓存起来
     2. client 等待确认收到数据 然后发送一个 write request 给 primary primary 决定好写操作的顺序后再写入 一旦所有写入都确定成功 primary 会返回成功信息给 client
     - 这是一种数据流和控制流分离的设计 一阶段是数据流 二阶段是控制流
+    - 好处是：
+      ![](https://image.blog.nwdnysl.site/89f7619b9c99ccf2e128a055daa9943-c3d8b1327916a82ff44005d061314776.png)
 - GFS 的 naming 是单纯的 flat naming 没有目录结构
 
 ## LEC 7: Key-Value Store
@@ -524,6 +544,7 @@ excerpt: " "
       - 为了解决这个问题 引入 primary
       - primary 会为每一个写分配 CSN（Commit Sequence Number） 分配到 CSN 的写都是 stable 的
       - 不过会出现 reorder 现象
+        ![](https://image.blog.nwdnysl.site/beb3d9a3fd6ee61188a6162b2fde6df-0e94aa2a47467c2d0507890af17cfdd2.png)
 
 #### synchoronized clock time
 
@@ -579,6 +600,7 @@ excerpt: " "
   - 如果 journal 大于 sector size 怎么办？我们需要更通用的方法
 
 - Logging：可以见 AEA 事务笔记
+
   - REDO LOG
     - logging 和 journaling 基本一致 不过 journaling 针对的是文件系统的细粒度操作 比如 rename
     - 引入 transaction 的概念 一组原子性操作被称为事务
@@ -608,11 +630,14 @@ excerpt: " "
       3. undo 所有 abort 的事务 从后往前
       4. redo 所有 commit 的事务 从前往后
   - Problem：日志会无限增长 使用 checkpoint 来解决
+
     1. 等到没有任何操作在进行（而不是等到所有事务结束）
     2. 把 CKPT record 写入日志 CKPT 包括了所有当前正在进行的事务的 undo 和 redo 日志
     3. 把所有内存中的数据落盘
     4. 丢弃除了 CKPT 之外所有的日志
+
     - 如何恢复？
+
       - 如果 crash 时事务尚未提交 则应该保证事务回滚
         - 如果事务在上一次 CKPT 后开始 则仅需 undo log
         - 如果事务在上一次 CKPT 前开始 则需要 undo log 和 CKPT
@@ -620,6 +645,9 @@ excerpt: " "
         - 如果事务在上一次 CKPT 前提交 不需要做任何事 因为 CKPT 内不会包含这个事务
         - 如果事务在上一次 CKPT 后提交 且在 CKPT 后才开始 则需要 redo log
         - 如果事务在上一次 CKPT 后提交 且在 CKPT 前就开始 则需要 redo log 和 CKPT
+
+      ![](https://image.blog.nwdnysl.site/b1b799162db307b7857c2cde981e3f9-bab5db0ef5de7cf54c39650dd1a4ab99.png)
+
   - Undo-Redo vs Redo-Only vs Undo-Only
     - REDO
       - 更少的 IO 因为只需一半
@@ -754,11 +782,14 @@ excerpt: " "
      - 初始化 read set 和 write set
      - 遇到 READ：如果 read set 中已经有这个数据项 则返回 set 中的数据 否则从数据库中读取数据
      - 遇到 WRITE：把数据写入 write set 如果 read set 中有这个数据项 则修改 read set 中的数据 **（此处似乎有点问题 应该是如果整个事务需要读取这个数据项 则修改 read set 中的数据？）**
+       ![](https://image.blog.nwdnysl.site/629518f9b20b9e7e8272150bf902cf4-72372aff2ab35b1bd33f1b8a9653c059.png)
   2. Validation serializability in critical section
      - 对于 read set 中的每一个数据项 检查是否和数据库中的数据一致 如果不一致则终止
      - 为了防止 ABA 问题 可以记录每一个数据项的版本号 比较版本号即可
+       ![](https://image.blog.nwdnysl.site/5d7ff64e1d1877294449aab9a6034e8-2b64de667339ff16bdba67bb548f8fc8.png)
   3. Commit or abort in critical section
      - 验证成功 则对于 write set 中的每一个数据项写入数据库
+       ![](https://image.blog.nwdnysl.site/6aedd1808096cccf5b00d761e6508e7-afba865b91e01080c2f5ac23f9026492.png)
 
 - Critical Section 指的是第 2、3 步也需要保证 before-or-after atomicity 确保验证到提交中间没有其他事务修改数据导致的 race condition
 
@@ -777,6 +808,7 @@ excerpt: " "
       - 此时 A 和 B 都被改为 A+B 显然不符合冲突串行化的定义
       - 原因是虽然 T1 只写入 A 但是写入 A 的操作对于 B 有数据依赖 需要确保读取 B 和写入 A 之间不能被其他事务读取
       - 解决方法也很简单 一个读取发生在其他事务的读取和写入之间 意味着读取后别的事务进行了写入 我们只需要检测这种情况即可 别的事务进行了写入之前一定会获取锁 因此在验证时 除了判断数据是否被修改 还需要判断锁是否被获取 也即数据是否正在被其他事务修改
+        ![](https://image.blog.nwdnysl.site/cfca44f6f46869dfca1b46c14691ec3-f62c3c0ab47c5509ea71276d27600f01.png)
 
 - Advantages
 
@@ -865,6 +897,7 @@ excerpt: " "
     - 也即事务写入时 有一段时间数据库里的版本是不完整的
   - 为了保证写的 Isolation 在执行写入之前为每个数据项上锁 等到写完这个数据项后放锁 如果其他事务读取数据时有锁 则等待 这样就不会读取到 partial snapshot
 - 在写入数据库前 还需要检查 write set 中数据在数据库中的版本号是否大于开始时间戳 如果是则意味着有并发事务 终止事务
+- 最终实现：![](https://image.blog.nwdnysl.site/b27101bfacda96e75ce51439d213150-6ea217269cc3ed3718e6e04a87c6f195.png)
 - garbage collection：定期清理旧版本数据 维护所有事务的最小开始时间戳 一旦这个时间戳大于版本号 数据就可以被删除
 - Write skew anomaly
   - 让我们看一个例子：
@@ -1001,6 +1034,9 @@ excerpt: " "
 
 - Phase 0
   - client 发送一个请求给所有的 proposer
+
+![](https://image.blog.nwdnysl.site/9e210cf266f7b1aec9a69d7c56ade98-cc73a9d94b2c8129dced78fb653e2025.png)
+
 - Phase 1a（prepare）
   - 一个节点决定成为 leader
   - leader 创建一个 proposal N 发送给所有 acceptor 其中 N 必须比 leader 先前见过的所有轮次要大
@@ -1009,6 +1045,9 @@ excerpt: " "
     - 更新自己见过的最大轮次
     - 回复 leader 之前**accept**过最大的 proposal
   - 否则回复拒绝
+
+![](https://image.blog.nwdnysl.site/20241120212310-a83f2b8ee8d86c584c54ea8950447bdc.png)
+
 - Phase 2a（accept）
   - leader 收到至少半数的 ok 后（而不是 reject）
     - 设置 proposal 的初始值（任意） 如果有任何返回的 proposal 值 用其中最大轮次的替换
@@ -1020,9 +1059,14 @@ excerpt: " "
       - 更新自己见过的最大轮次、接受的最大轮次的 proposal
       - 发送 accepted message 给 proposer 和 learner
     - 否则拒绝
+
+![](https://image.blog.nwdnysl.site/8eb40d3bd5c9b10ff3422cdd5690647-c9953b31d716f3003929d03a1c76a274.png)
+
 - Phase 3（learn？）
   - leader 收到半数以上节点的 accepted message 把 decide message 发送给所有节点
   - 否则稍作 delay 后重试
+
+![](https://image.blog.nwdnysl.site/090cfb7db01d6732bd6e4d9e0b8f7bc-d2e72c9b5058808b9c3b497e25548dd0.png)
 
 ##### Inside of Paxos
 
