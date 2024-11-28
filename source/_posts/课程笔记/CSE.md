@@ -1208,3 +1208,125 @@ excerpt: " "
 - Safety
   - leader 挂掉后有可能选取一个日志很短的 server 作为 leader 这样会导致其他 server 的日志被大部分覆写
   - 因此必须选取 term 和 index 最新的 server 作为 leader(先 term 后 index) 即 Vote 时 follower 如果发现自己比 candidate 新则不投票
+
+## LEC 17: Introduction to Computing Network
+
+### Network
+
+- Layers(for CSE)
+  - Link Layer：把数据包从一个节点传输到另一个节点 比如 WiFi、Fiber
+  - Network Layer：通过多个 link 转发数据包从一个节点到另一个节点 比如 IP
+  - End-to-End Layer：所有剩余的应用接口都属于这一层 它们都是应用和应用之间的约定和协议 比如 HTTP
+  - Application：应用层 并非网络的一部分
+- Hour Glass Protocols
+
+  - Network 层负责了连接 这个连接的协议应该越少越好 便于简化统一
+  - 因此目前的网络协议都是基于 IP 的
+
+- Packet Encapsulation
+
+  - Data
+  - TCP/UDP Header
+  - IP Header
+  - Frame Header & Trailer
+
+- Application Layer
+
+  - Entities：Client&Server
+  - Namespace：URL
+  - Protocols：HTTP、SMTP、FTP、DNS
+
+- Transport Layer
+
+  - Entities：Sender&Receiver、Proxy、Firewall
+  - Namespace：Port 65535 个
+  - Protocols：TCP、UDP
+
+- Network Layer(IP Layer)
+
+  - Entities：Gateway、Bridge、Router
+  - Namespace：IP
+  - Protocols：IP、ICMP、ARP
+
+- Link Layer
+
+  - Physical Transimission w/ Shared Clock
+    - 使用两条线 一条传输 clock 一条传输 data 每当遇到 clock 的上升沿就采样一次 data clock 的频率越高 传输速率越快
+    - 这种传输要求 data 和 clock 的高度同步 不适用于长距离传输 只适用于 CPU 内部寄存器之间的数据传输
+  - Physical Transmission w/o Shared Clock
+    - 使用三条线 一条传输 data 一条传输 ready 一条反向传输 ack
+    - 初始时 ready 和 ack 都为 0 假设 A 要发送数据给 B
+    - A 将数据放在 data 线上 然后将 ready 置为 1
+    - B 收到 ready 和 data 后将 ack 置为 1
+    - A 收到 ack 后将 ready 置为 0
+    - B 收到 ready 后将 ack 置为 0 这样就完成了一次数据传输
+    - 需要两轮 RT 才能完成一次数据传输 考虑并行化来提高传输速率
+    - 并发时数据会有互相干扰
+  - Serial Transmission
+    - VCO（Voltage Controlled Oscillator）是一种可以根据数据的变化来控制输出频率的电路 使用 VCO 作为接收端的时钟源 可以实现数据的单线传输
+    - Manchester Code：VCO 非常依赖于数据的变化 为了让数据一直变化 采用了曼彻斯特编码 即 0->01 1->10 相对的 牺牲了一半的传输速率
+    - Isochronous-TDM：时分复用 为了避免数据的干扰 一个单位时间内分成多个时隙 每个时隙只能传输一个数据源的数据
+    - Asynchronous Link：每个数据包（frame）都有一个 header 用于标识数据的来源和目的地 数据包全部发给 switch 来聚合再发送
+      - 如何知道数据包的开始和结束？用 7 个 1 标记 如果数据内容中出现了 6 个 1 则在后面加一个 0 于是 7 个 1 就变成了 11111101 6 个 1 就成了 1111110
+      - 如何知道数据包的内容是否出错？可以用 checksum
+      - 我们不仅希望检测出错误 更希望能够纠正错误 因此我们可以用校验位编码来进行纠错
+        - Hamming Distance：两个数据之间不同的位数
+        - 一种简单的编码是 2bits->3bits
+          - 00->000 01->011 10->101 11->110
+          - 这种编码可以保证任意两个编码之间的 Hamming Distance 至少为 2 也即当某一个编码发生 1 位的错误 必定可以被检测出来
+        - Hamming Code
+          - 4bits->7bits 允许纠正 1 位错误 检测 2 位错误
+          - P1、P2、P4 是校验位 用 P3、P5、P6、P7 的异或来计算
+          - 3 个校验位出错的可能有 7 种 即 P1 出错、P2 出错、P1&P2 出错...P1&P2&P4 出错 刚好包含了 7 个位 海明编码保证了出错的校验位之和就是出错的位 比如 P1&P2 出错代表了第 3 位出错
+
+## LEC 18: Network: Network Layer
+
+### Network Layer
+
+- IP 是 Best Effort 的 不保证数据包一定到达 以此换来更小的时延
+- Addressing Interface
+  - Network attachment point（NAP）：网络接入点
+  - Network address
+  - Source & Destination
+  - NETWORK_SEND(segment_buffer,dest,network_protocol,end_layer_protocol)
+  - NETWORK_HANDLE(segment_buffer,source,network_protocol,end_layer_protocol)
+- Routing
+  - 两种路由方式
+    - Static Routing：静态路由
+    - adaptive routing：自适应路由
+  - Routing Table
+    - 一个路由表包含了多个路由项 形如<IP,next_hop>
+    - Control-plane：负责构造路由表 正确性要求高
+      - Distributed Routing
+        1. Nodes learn about their neighbors by the Hello protocol
+        2. Nodes learn about other reachable nodes by advertisements
+        3. Nodes determine the min-cost routes of all routes they know
+      - 2 routing protocols
+        - Link-state：节点 advertise 给所有节点 他到其他邻居的 costs 通过 Dijkstra 算法计算最短路径
+        - Distance-vector：节点 advertise 给所有邻居 他到所有 known nodes 的 costs 通过 Bellman-Ford 算法计算最短路径
+          - 可能会因为节点之间的断开而导致无限循环 因此需要 split horizon 即不能把来自某个节点的信息再发给这个节点
+          - Pros & Cons
+            - Low overhead
+            - Slow convergence
+            - Infinite loop
+      - How 2 Scale
+        - Path-vector
+          - 维护路径向量 也即路径上的所有节点
+          - 收敛速度快 overhead 小于 link-state
+          - 如何避免 loop？保证路径中没有自己
+          - 遇到多条路径通向一个节点时如何选择？选择最短的
+          - 图变化了怎么办？涉及变化的邻居重新开始 advertise
+        - Hierarchicy
+          - 通过分为不同 region 来减少路由表的大小
+          - a.k.a AS（Autonomous System）自治系统
+          - 带来的问题是需要快速根据 IP 查询出所在的 region
+          - BGP（Border Gateway Protocol）是一个用于跨 region 交换 path-vector 的协议
+        - Topological Addressing
+          - CIDR（Classless Inter-Domain Routing）是一个用于减少路由表大小的协议 通过将 IP 分为 prefix 和 suffix 两部分来减少路由表的大小 比如 18.0.0.0/24
+    - Data-plane：负责根据路由表找到下一跳 性能要求高
+  - DPDK（Data Plane Development Kit）
+    - 一个用于加速数据平面的工具包
+
+#### NAT  
+- Network Address Translation
+  -

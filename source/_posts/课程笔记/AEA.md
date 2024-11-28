@@ -451,6 +451,10 @@ excerpt: " "
 
 - Redis 支持的值类型比较多 比如字符串、列表、集合、有序集合、哈希表 另外还支持主从复制和持久化
 - Redis 还可以用于消息队列 把 Redis 当做一个发布订阅的中间件
+- 11.25 补充
+  - Redis 需要设置 expire 时间 为了防止雪崩（一次性过期大量数据） 可以设置随机的过期时间
+  - 同时有大量的请求读取数据 会发生击穿问题（一次性从数据库里查询大量数据） 可以使用互斥锁来解决
+  - 查询一个不存在的数据时 会发生穿透问题（每次都要查询数据库） 可以使用布隆过滤器来解决
 
 ### 作业：使用 Redis 缓存书籍数据
 
@@ -1206,3 +1210,155 @@ excerpt: " "
   - Neo4j 是一个图数据库
   - 提供不同语言的 Driver
   - 提供 Neo4j Browser 可视化工具
+
+## 11.25
+
+### Log-Structured DB & Vector DB
+
+- 不同的数据特性和访问模式需要不同的数据库 比如热点数据和 AI 模型
+
+#### Log-Structured DB
+
+##### LSM-Tree：Log-Structured Merge-Tree
+
+- Basics
+  - 一种分层、有序、面向磁盘的数据结构
+  - 核心思想是利用磁盘的顺序写性能
+  - 分层为内存层和磁盘层 memtable 写满后会和 immutable memtable 互换
+  - 以 Append-Only 的方式写入数据
+  - 适用于写多读少的场景
+- Pros & Cons
+  - 优点
+    - 插入性能高
+    - 空间放大率低
+    - 访问新数据快 适合实时数据
+    - 数据热度和 level 有关
+  - 缺点
+    - 牺牲了读性能
+    - 读、写放大率高（读放大是因为查找旧数据时需要遍历很多 sstable；写放大是因为触发多次 compaction）
+
+##### RocksDB
+
+- 由 Facebook 开发的 LSM-Tree 数据库 支持嵌入式存储
+- RocksDB 适于存储热点数据 当超过限制层数时 可以考虑迁移到其他数据库
+
+- Hybrid Transactional/Analytical Processing：混合事务/分析处理
+
+  - OLTP：Online Transaction Processing 在线事务处理
+    - 低延迟 高并发 数据量小
+    - 比如下订单
+    - 数据存储应该是行存储 保证一个记录的数据是连续的 避免随机访问
+  - OLAP：Online Analytical Processing 在线分析处理
+    - 高延迟 低并发 数据量大
+    - 比如后台统计数据
+    - 数据存储应该是列存储 保证一个字段的数据是连续的 避免随机访问
+
+- RocksDB 为了支持 HTAP 将数据按照字段进行了拆分存储（也就是垂直分表）
+
+  - 不同字段的数据存储在不同的 Column Family 里
+  - 不同的 Column Family 共享 WAL 但是可以有不同的存储形式
+  - 需要进行 OLAP 的字段可以按列存储 需要进行 OLTP 的字段可以按行存储
+
+- 写阻塞问题
+  - RocksDB 将数据写入内存后立马返回 后台会异步的将数据写入磁盘
+  - Compaction 的归并过程无法多任务执行 并且写放大严重 会导致写阻塞
+  - Solution
+    - 在 RocksDB 和数据源之间加一个收集分发层 有许多 collector 负责缓存数据
+    - master 负责监控 collector 的状态 根据剩余内存大小进行负载均衡
+- 读放大问题
+  - 需要访问所有可能的 sstable 才能找到数据
+  - Solution
+    - 通过 Bloom Filter 来过滤不可能存在的数据
+    - 在 RocksDB 中增加列式存储 进行混合存储 以减少读放大
+
+#### Vector DB
+
+- 人工智能中往往会产生大量的向量数据用于表示特征等 传统的数据库无法很好的支持向量数据的存储和查询 因此需要专门的数据库来支持向量数据的存储和查询 其中查询大部分是相似度查询 即 ANN（Approximate Nearest Neighbor）查询
+- Vector DB 会通过索引来加速查询
+
+##### Algorithms
+
+- Random Projection：随机投影
+
+  - 对于 m 维的向量 通过随机生成一个 m \* n 的矩阵 将向量投影到 n 维空间中
+  - 可以用于降维 也可以用于升维
+
+- Product Quantization：乘积量化
+
+  - 对于 m 维的向量 将其分为 k 个子向量 对这 k 个子向量做聚类 产生多个 codebook
+  - 当有对同样 m 维向量进行查询时 将其分为 k 个子向量 也进行聚类 得到多个 codebook 依据这些 codebook 找到比较相似的向量（比如两个向量的 codebook 都一样）来进行相似度查询
+
+- Locality-sensitive Hashing：局部敏感哈希
+
+  - 对于 m 维的向量 通过哈希函数将其映射到一个含有多个位置的 bucket 中
+  - 进行查询时 同样将查询向量映射到 bucket 中 根据 bucket 中的位置来找到相似的向量
+
+- Hierarchical Navigable Small World ：层次导航小世界
+
+  - 节点代表一组向量 边代表相似度
+  - 节点会与最相似的节点相连
+  - 通过一直向距离更近的节点导航来找到相似的向量（不一定是最相似的）
+
+- Similarity Measures
+
+  - Cosine Similarity：余弦相似度 即两个向量的夹角的余弦值
+  - Euclidean Distance：欧几里得距离
+  - Manhattan Distance：曼哈顿距离
+  - Dot Product：点积
+
+- Filtering
+
+  - 向量会带有元数据（比如图片、音频等） 这些元数据可以用于过滤
+  - 可以先查询出 top-k 的向量 再用元数据进行过滤 也可以先用元数据进行过滤再查询出剩余向量中的 top-k
+
+##### Pinecone
+
+- 只允许在本地运行客户端 通过 API 连接到云端的数据库
+- 支持主从复制
+
+## 11.27
+
+### Time Series DB & InfluxDB
+
+- 时序数据具有以下特性
+  - 有时效性
+  - 格式简单
+  - 可以存差值
+  - 数据有时间戳
+
+#### InfluxDB
+
+- Telegraf：InfluxDB 的数据采集工具 可以监控系统的各种状态
+- Flux：InfluxDB 的查询语言
+- Bucket：InfluxDB 的存储单元 可以设置数据的保留策略
+- 数据字段包含
+  - TIMESTAMP：时间戳
+  - MEASUREMENT：表名
+  - FIELDS：字段 不参与索引
+  - TAGS：记录的标签 参与索引
+- Series：一组相同 measurement 和 tag set 和 field key 的数据
+- Organization：组织 组织内的用户在一个工作空间中共享数据
+- Design principle
+  - 按照时间升序存储
+  - 数据只追加 不修改不删除
+  - 高并发时 只保证查询到旧数据 不保证查询到最新数据
+  - 没有 ID 因为不需要查询单个数据
+  - 不会记录重复数据 因为只需要记录数据变化的时间点即可
+- Storage engine
+  - TSM：Time Structured Merge Tree
+  - TSI：Time Series Index
+  - WAL：Write Ahead Log
+  - Cache
+- 通过 POST 即可写入数据
+- 一旦数据落入 TSM 会被压缩 并且以列存储的方式存储
+- File Structure
+
+  - Engine path
+    - data
+    - wal
+  - Bolt path
+  - Config path
+
+- Shards
+  - 设置 duration 每个 duration 会生成一个 shard
+  
