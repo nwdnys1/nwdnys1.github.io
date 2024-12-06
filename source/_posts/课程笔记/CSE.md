@@ -1303,30 +1303,161 @@ excerpt: " "
         3. Nodes determine the min-cost routes of all routes they know
       - 2 routing protocols
         - Link-state：节点 advertise 给所有节点 他到其他邻居的 costs 通过 Dijkstra 算法计算最短路径
+          - Pros & Cons
+            - Fast convergence
+            - flooding is costly
+            - Only good for small networks
         - Distance-vector：节点 advertise 给所有邻居 他到所有 known nodes 的 costs 通过 Bellman-Ford 算法计算最短路径
           - 可能会因为节点之间的断开而导致无限循环 因此需要 split horizon 即不能把来自某个节点的信息再发给这个节点
           - Pros & Cons
             - Low overhead
-            - Slow convergence
-            - Infinite loop
+            - Convergence time is proportional to longest path
+            - Infinite problem
+            - Only good for small networks
       - How 2 Scale
         - Path-vector
           - 维护路径向量 也即路径上的所有节点
-          - 收敛速度快 overhead 小于 link-state
+          - 收敛速度更快 overhead 小于 link-state
           - 如何避免 loop？保证路径中没有自己
           - 遇到多条路径通向一个节点时如何选择？选择最短的
-          - 图变化了怎么办？涉及变化的邻居重新开始 advertise
+          - 图变化了怎么办？router 需要抛弃所有停止 advertise 的邻居的 path
         - Hierarchicy
           - 通过分为不同 region 来减少路由表的大小
           - a.k.a AS（Autonomous System）自治系统
           - 带来的问题是需要快速根据 IP 查询出所在的 region
+          - 必须把 address 和 location 进行绑定 也就是说一个地区的 IP 必须是相同前缀的
           - BGP（Border Gateway Protocol）是一个用于跨 region 交换 path-vector 的协议
         - Topological Addressing
           - CIDR（Classless Inter-Domain Routing）是一个用于减少路由表大小的协议 通过将 IP 分为 prefix 和 suffix 两部分来减少路由表的大小 比如 18.0.0.0/24
     - Data-plane：负责根据路由表找到下一跳 性能要求高
-  - DPDK（Data Plane Development Kit）
-    - 一个用于加速数据平面的工具包
+      - 基本接口逻辑
+        - SEND：发送给 HANDLE
+        - HANDLE：如果是自己的则处理 否则转发
+      - Forwarding
+        - 查找路由表 如果没有则丢弃
+        - TTL（Time To Live）：每经过一个节点 TTL 减一 如果 TTL 为 0 则丢弃
+        - 更新 header checksum
+        - 转发给 outgoing port
+        - transmit packet
+      - DPDK（Data Plane Development Kit）
+        - Intel 的 DPDK 通过轮询检查端口是否有转发来提高性能
+      - RouteBricks
+        - 伯克利的几个学生 通过几台 PC 实现了超高带宽的路由器
 
-#### NAT  
-- Network Address Translation
-  -
+#### NAT (Network Address Translation)
+
+- 将内网的 IP 转换为外网的 IP
+- 形如<Src IP,Src Port,NAT Port>
+- 问题在于 网络层的 IP 协议 去修改了 Payload 中的 Port 信息 破坏了通用性
+
+## LEC 19: Network: End-to-end Layer
+
+### Case Study: Ethernet
+
+- Hub & Switch
+  - Hub：广播所有数据包
+  - Switch：只广播给目标节点
+- HANDLE
+  - 如果是自己的地址 处理 否则忽视 无需转发
+  - 如果是 BROADCAST 地址 处理
+  - 靠 MAC 地址来传输 不过 MAC 地址并非严格唯一的 基本只能保证在一个局域网内唯一
+- Layer Mapping
+  - 形如<IP,MAC> 不在本网段内的会发送给 router
+- ARP（Address Resolution Protocol）
+  - 给定 IP 找到对应的 MAC
+  - 通过广播的方式找到目标 MAC 填入 ARP 表中
+  - 类似一个缓存
+  - ARP Spoofing：通过伪造 ARP 包来欺骗别人的 ARP 表
+    - 防御方法：ARP Cache Poisoning Detection 也就是监测 ARP 包的流量 异常就会有人给你打电话哈（治标不治本）
+
+### End-to-End Layer
+
+- Famous Transport Protocols
+  - UDP
+  - TCP
+  - RTP
+
+#### Assurance
+
+- at-least-once delivery
+  - 包带上 nonce
+  - sender 保存包的 copy
+  - 如果超时则重发
+    - timeout 绝对不能是固定的 否则一旦有网络拥塞就会导致大量的重发 导致恶性循环
+    - 类似的 spring 中的`@Scheduled`注解 就应该采用 fixedDelay 而不是 fixedRate 前者是从上一个任务结束后开始计时 后者是从上一个任务开始时计时
+    - Adaptive Timeout：根据 RTT 动态调整 timeout 初始设为 RTT 的 1.5 倍 一旦再次超时则翻倍
+    - NAK（Negative Acknowledgement）：receiver 向 sender 发送 NAK 通知 sender 有哪些包丢失了 sender 不用 timer receiver 需要 timer
+  - receiver 会返回一个带有 nonce 的 ack
+  - 可能会导致重复 不影响语义
+- at-most-once delivery
+  - 检查 nonce 是否重复
+  - 会产生 tombstone 即无法删除的数据
+  - 另一种方法是实现幂等性的应用
+  - 或者记录最大连续的 nonce 小于等于的 nonce 都不接受
+  - 或者为每一个新的请求使用唯一的端口（端口不够用）
+  - Duplicate Suppression
+    - sender 最多发送 3 次 则 receiver 可以在 3RTT 后删除这个 nonce
+    - receiver 重启会导致 table 丢失
+- data integrity
+  - checksum
+- stream order&closiing of connections
+  - when out-of-order
+    - buffer（可能会因为长时间未收到而浪费性能）
+    - discard if buffer is full
+    - NAK to speed up
+    - TCP 使用 ACK 不使用 NAK
+- jitter control
+  - 缓存
+- Authenticity &Privacy
+  - 证书 公私钥加密
+
+## LEC 20: Network: TCP & DNS
+
+### End-to-End Performance
+
+- Lock-step protocol：sender 一次只发送一个包 等 receiver ack 了再发送下一个包 会导致很低的带宽利用率
+- Overlapping Transmission：sender 一次发送多个包 receiver 一次 ack 多个包
+  - Fixed Window：sender 一次发送固定数量的包 完后停下来稍作等待 参数 n 由 receiver 决定 因此 receiver 不会阻塞 不过还是有大量的空闲时间
+  - Sliding Window：sender 接受到第 i 个 ack 后发送第 i+n 个包 window 大小相当于 n+1
+    - 一旦有包丢失 window 就会卡住 等重发后才能继续滑动
+    - Window Size
+      - 太小会导致空闲时间和低网络利用率 太大则会阻塞
+      - window size >= RTT \* bottleneck data rate（最低带宽） （为了 performance）
+      - window size <= min(RTT \* bottleneck data rate, receiver buffer size) （为了 congestion control）
+  - TCP Congestion Control
+    - end-to-end 和 network 层负责
+    - Why Congest？处理超时的包没有意义 反而会导致更多的重发
+    - 开始时缓慢增加 window size 一旦出现丢包则迅速减小 window size
+    - AIMD（Additive Increase Multiplicative Decrease）：慢慢增加 快速减小 也即 cwnd+=1、cwnd/=2 但是最开始的增长太慢了
+      - slow start：一开始指数级增加 window size 直到出现丢包
+      - duplicate ack：出现丢包后 receiver 会发送 duplicate ack 通知 sender 有包丢失了
+      - Efficency & Fairness：如果画出二维图 会发现(cwnd1,cwnd2)这个点增长时是沿着 y=x 的方向增长的（因为是+=1） 而减少时则是向着原点减少的（因为是/=2） 最终会收敛到 y=x 上震荡
+  - Weakness of TCP
+    - 无线网的丢包主要是因为信号不好 导致恶性循环
+    - 不适合 datacenters 带宽高时延低 会浪费大量网络资源
+    - 更偏向于 long RTTs
+    - 需要合作的对端
+
+### DNS (Domain Name System)
+
+- 一个域名可以对应多个 IP 地址 一个 IP 地址也可以对应多个域名
+- BIND（Berkeley Internet Name Domain）是由 4 个伯克利学生开发的 DNS 服务器
+- bindings 被记录在多个服务器上 称为 name servers
+  - root zone：ICANN 维护 非盈利
+  - top-level domain：.com .org .net 等 由 Verisign 维护 盈利
+  - second-level domain：由注册商维护 如我注册的 blog.nwdnysl.site
+  - 解析过程从后往前 逐个找到对应的 name server 的 IP 地址 通常返回多个 IP 地址
+  - DNS 是 global 的 全球唯一
+  - 实际上最后的根域名是`.` 通常省略
+- 3 Enhancement on Lookup
+  - 缓存 DNS 查询结果到`/etc/hosts`中 name `/etc/resolv.conf`中的 name server 会被优先使用
+  - DNS Request Process
+    - 递归查询：由 name server 递归查询 性能好
+    - 迭代查询：由 client 逐个查询
+  - Caching DNS
+    - 本地 DNS 会缓存查询结果 cache 有 TTL
+    - name server 也会缓存查询结果
+- Hostname　&　Filename
+  - 都是user-friendly的 将分层的名字映射到plane的名字
+  - 都不属于映射对象的一部分
+  
