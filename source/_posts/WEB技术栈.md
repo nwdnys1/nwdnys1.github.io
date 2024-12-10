@@ -366,3 +366,7 @@ Nginx (engine x) 是一个高性能的 HTTP 和反向代理 web 服务器软件 
 ## Swagger UI
 
 https://zhuanlan.zhihu.com/p/703966719
+
+## Java 线程池
+
+https://blog.csdn.net/m0_72156649/article/details/140460116
