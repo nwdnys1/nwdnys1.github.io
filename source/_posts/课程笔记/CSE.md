@@ -3,7 +3,12 @@ title: 《计算机系统工程》课程笔记
 date: 2024-09-19 14:06:41
 categories: 课程笔记
 tags:
+  - 文件系统
   - 分布式
+  - 事务
+  - 网络
+  - 安全
+  - 数据库
 index_img:
 banner_img:
 excerpt: " "
@@ -1457,7 +1462,105 @@ excerpt: " "
   - Caching DNS
     - 本地 DNS 会缓存查询结果 cache 有 TTL
     - name server 也会缓存查询结果
-- Hostname　&　Filename
-  - 都是user-friendly的 将分层的名字映射到plane的名字
+- Hostname & Filename
+
+  - 都是 user-friendly 的 将分层的名字映射到 plane 的名字
   - 都不属于映射对象的一部分
-  
+
+- Bad Points
+  - Policy：谁来管理 root zone？技术有国籍
+  - root servers 的负载太重 如果查询一个不存在的域名 会造成大量服务器的负载 甚至可以形成 DDOS
+  - Security：DNS 可能会被污染 也即返回错误的 IP 地址 通常是通过 SSL 来解决
+
+## LEC 21: Network: P2P
+
+### Naming Scheme
+
+- Naming for modularity
+
+  - Retrieval：通过名字找到数据 比如 URL
+  - Sharing：通过名字共享数据 比如文件系统
+  - Hiding：封装低层语义
+  - User-friendly：易于记忆
+  - Indirection：解耦名字和数据
+
+- Naming Model
+
+  - name space：名字的集合
+  - value space：值的集合
+  - mapping：将名字映射到值的算法
+  - context：名字的上下文 比如文件系统的当前目录
+
+- Lookup Algorithm
+
+  - recursive lookup：递归查询
+  - multiple lookup：多次查询
+
+- Naming API
+  - RESOLVE(name,context)：返回值
+  - BIND(name,value,context)：绑定值
+  - UNBIND(name,context)：解绑值
+  - ENUMERATE(context)：返回所有的名字
+  - COMPARE(name1,name2)：比较两个名字是否相等
+
+### Content Distribution（内容分发）
+
+- CDN 即内容分发网络 通过将数据缓存到离用户最近的服务器上来提高访问速度 典型的边缘计算模型
+- Server Selection
+  - HTTP redirection：通过重定向来选择服务器
+    - 优点：细粒度控制、根据用户的 ip 来选择
+    - 缺点：需要多次请求、server 会有负载
+  - DNS-based：通过 DNS 获取 ip 列表 选择一个最近的
+    - 优点：避免了重定向的延迟、DNS 缓存减少了开销
+    - 缺点：不一定是最近的 因为是根据 DNS
+  - Akamai：通过 DNS 来选择最近的服务器 并缓存（没太听懂）
+
+### P2P
+
+- P2P（Peer-to-Peer）是一种去中心化的网络结构
+- BitTorrent
+  - Roles
+    - Tracker：用于记录哪些 peer 有文件的哪些部分
+    - Seeder：拥有完整数据的 peer
+    - Peer：下载数据的 peer 下载完后会变成 seeder
+  - Steps
+    - 发布一个 torrent 文件到服务器上 里面包含了 tracker 的 url、文件名、文件大小等信息
+    - tracker 会记录一组 peer 的信息
+    - seeder post 一个.torrent 文件的 url 到 tracker 上
+    - peer 通过 tracker 获取到 其他 peer 的信息
+    - peer 通过 peer 之间的连接来下载文件
+  - Protocol
+    - Random for first one
+    - Rarest for the rest
+    - Parellel for the last
+  - DHT（Distributed Hash Table）
+    - Chord Protocol
+      - IDs
+        - keyId=SHA-1(key)
+        - nodeId=SHA-1(IP)
+        - keyId 和 nodeId 在同一个 ID 空间
+      - 通过一致性哈希来实现
+        - ID 空间是一个环
+        - 每个节点负责一个区间为`(predecessor,successor]`的区间 即上一个节点到自己的 ID 区间
+        - 比如这个节点的 ID 是 5 下一个节点的 ID 是 10 那么节点 10 负责的区间就是 `(5,10]`
+        - 可以通过一直询问 successor 来找到一个 key 的位置
+      - 通过 finger table 来实现快速查找
+        - 记录 1/2 1/4 1/8...的位置
+        - 不断二分查找
+        - 如果节点崩溃 根据 finger table 找下一个节点 可能会导致错过正确的节点 所以需要顺序遍历 successor list（每个节点的下 r 个节点）
+      - 加入新节点只需要向其 successor 查询一下 并更新自己的 finger table 并不需要修改其他节点的 finger table 因为不会影响负载
+
+## LEC 22: Distributed Computing: Intro
+
+- 人工智能的发展导致需要大量的计算资源 也就引入了分布式计算
+- 一个神经网络层 W 是 m\*k 的矩阵 X 是 k\*B 的矩阵 B 为 batch size k 为输入维度 m 为输出维度 那么计算 W\*X 的时间复杂度为 (2k-1)\*m\*B
+- backward path（反向传播）需要计算 dW 和 dX 时间复杂度为(2m-1)\*k\*B 和(2B-1)\*k\*m 都可以约为 2\*参数数量\*Batch Size 总的时间复杂度为 6\*参数数量\*Batch Size
+- 对于 GPT 来说 有 1.76trillion 个参数
+
+### History
+
+- 单核 CPU 系统 算力上限取决于 Clock Rate 一个时钟周期最多做一次指令 （当然也有使用超标量的方法）
+- 多核 CPU 系统 算力上限取决于核心数 然而和分布式类似 因此最复杂的还是 cache 中的 coherence 问题
+- SIMD（Single Instruction Multiple Data）：一条指令处理多个数据 也就是只增加 ALU（算术单元）的数量 可以用于向量和矩阵运算 然而需要新的指令集（比如 Intel 的 AVX）增加了代码的复杂度 
+  - 然而性能增益也不可能达到理论的倍增 因为指令可能有依赖
+  - 另外访存的带宽也会影响性能 Time= Latency + Payload / bandwidth 有时候访存的时延会成为瓶颈

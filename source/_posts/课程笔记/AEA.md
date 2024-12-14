@@ -1,5 +1,5 @@
 ---
-title: 《应用系统体系结构》课程笔记
+title: 《应用系统体系架构》课程笔记
 date: 2024-09-23 14:01:00
 categories: 课程笔记
 tags:
@@ -1477,10 +1477,154 @@ excerpt: " "
 
 ### AI-1：全连接神经网络 & Keras
 
-- 一个神经元的输入是一组向量的线性组合加上一个偏置量 神经元会把这个输入通过一个激活函数输出 作为下一层神经元的输入
-- 多个神经元组成一个层 多个层组成一个网络 一个神经网络可以看做是一个黑箱 我们的目的就是使用梯度下降法训练这个黑箱 使其的输入输出符合我们的要求 比如多分类
-- 全连接的意思就是每一层的神经元都和上一层的所有神经元相连 比如 4x4 的两层有 16 个连接
-- 激活函数可以是 sigmoid、tanh、ReLU 等
-- 多分类问题采用 one-hot 编码 使用 softmax 作为输出层的激活函数 就可以把输出转换为概率的形式 然后概率最大的那个就是预测的类别
-- 反向传播：通过计算损失函数的梯度来更新权重和偏置量
+#### 神经网络
+
+- 基本原理
+  - 一个神经元的输入是一组向量的线性组合加上一个偏置量 神经元会把这个输入通过一个激活函数输出 作为下一层神经元的输入 激活函数可以是 sigmoid、tanh、ReLU 等
+  - 多个神经元组成一个层 多个层组成一个网络 一个神经网络可以看做是一个黑箱 我们的目的就是使用梯度下降法训练这个黑箱 使其的输入输出符合我们的要求 比如多分类
+  - 多分类问题采用 one-hot 编码 即向量代表 n 个类别 哪一位置 1 就是哪一个分类
+  - 使用 softmax 作为输出层的激活函数 就可以把输出转换为概率向量的形式 然后概率最大的那个就是预测的类别
+- 基本结构
+  - 上层神经元和下层神经元连接对应一个权重
+  - 输入层是第一层 输出层是最后一层 隐藏层是中间的层
+  - 层之间的权重用矩阵表示 称为权重矩阵
+  - 净输入是输入的线性组合加上偏置量 也就是需要输入给激活函数的值
+  - 激活后的输出就是这一层的输出 也是下一层的输入
+- 如何训练？
+  - 使用现有的网络做出预测
+  - 计算损失函数 量化预测和真实值的差距
+  - 对损失函数关于权重和偏置量进行求导 得到梯度
+  - 按照梯度相反的方向更新权重和偏置量
+  - 反向传播也就是一层一层返回去求导的过程
+
+#### 全连接神经网络
+
+- 定义：每一层的神经元都和上一层的所有神经元相连 比如 4x4 的两层会有 16 个连接
+- 代码示例：
+
+  ```python
+  model = Sequential([
+    Input(shape=(28, 28, ), batch_size=32),# 输入层 28x28 的图片
+    Flatten(), # 将图片展平为 1 维向量 也就是 784 x 1的输入
+    Dense(128, activation='relu'),# 全连接层 与上一层全连 也就是 784 x 128 的权重矩阵
+    Dropout(0.2), # 防止过拟合 随机丢弃 上一层 20% 的神经元输出 通俗理解就是防止神经网络只看到局部特征而误判
+    Dense(10, activation='softmax') # 输出层 10 个类别的概率向量
+  ])
+  # 编译模型 优化器默认选择adam 损失函数是交叉熵 评估指标选择准确率
+  model.compile(optimizer='adam',
+  loss='sparse_categorical_crossentropy',
+  metrics=['accuracy'])
+
+  # TensorBoard 可视化相关
+  logdir="logs/fit/" + datetime.now().strftime("%Y%m%d-%H%M%S")
+  tensorboard_callback = keras.callbacks.TensorBoard(log_dir=logdir)
+  # 训练模型 输入训练集 代数为 10 次 回调函数为 TensorBoard
+  model.fit(x_train, y_train, epochs=10, callbacks=[tensorboard_callback])
+  # 评估模型 输入测试集 返回损失和准确率
+  model.evaluate(x_test, y_test)
+  # 保存模型为.keras文件
+  model.save("model.keras")
+  ```
+
+#### Keras
+
 - Keras 是一个高级神经网络 API 把 TensorFlow、PyTorch 等深度学习框架封装到后端 提供了更加简单的前端接口
+- 安装：先安装 anaconda 然后安装 keras 和对应的后端即可
+
+## 12.11
+
+### Cloud Computing
+
+- Grid Computing：将每个人的计算机都作为计算资源提供给其他人
+- Cloud Computing：将特定的计算机 比如服务器 作为计算资源提供给其他人
+  - SaaS：Software as a Service 提供软件服务 比如 Office 365
+  - PaaS：Platform as a Service 提供平台服务 比如数据库、中间件等
+  - IaaS：Infrastructure as a Service 提供基础设施服务 比如虚拟机、存储等
+  - dSaaS：Data storage as a Service 提供数据存储服务 比如云盘、图床等
+- 云计算的特性
+  - 灵活定价
+  - 弹性扩展
+  - 快速提供
+  - 预先虚拟化
+- GFS（这部分可以见 CSE 笔记）
+  - GFS 是 Google 的分布式文件系统
+  - 分布式导致可用性下降 因此要 replicate
+  - replication 会导致一致性问题 因此要有主从复制 控制流与数据流分离
+  - Bigtable：将多个有外键的表合并为一张大表进行水平分表 通过 Column Family 来进行列的分组 保留原来的分表信息
+- Cloud Native：云原生 即开发、编译、部署都在云上进行 要求 serverless、容器化、CI/CD 等
+- Edge Computing：将计算资源放在离用户最近的地方 比如 CDN、边缘服务器等
+- Computation Offloading：当节点的计算资源不足时 将计算任务分发到其他节点上 或者将计算任务分发到云上
+
+### Graph QL
+
+- RESTful 的风格无法描述用户的需求 比如只取出数据的某些字段
+- GraphQL 是一种 API 查询语言 用于描述客户端如何请求数据
+- Queries & Mutations
+  - `query { hero { name } }`：查询 hero 的 name
+  - `query { hero { name friends { name } } }`：查询 hero 的 name 和 friends 的 name
+  - `query { hero(id: "1000") { name } }`：查询 id 为 1000 的 hero 的 name
+  - `query { empireHero: hero(episode: EMPIRE) { name } }`：查询 episode 为 EMPIRE 的 hero 的 name 返回时字段就为 empireHero
+  - `fragment HeroFragment on Character { name }`：定义一个 fragment 可以被复用的字段条件
+  - variables：`query HeroNameAndFriends($episode: Episode) { hero(episode: $episode) { name friends { name } } }`：定义一个变量 在查询时传入
+  - `mutation { createReview(episode: JEDI, review: { stars: 5, commentary: "This is a great movie!" }) { stars commentary } }`：创建一条评论
+- GraphQL 相当于把 schema 发送给后端 后端根据 schema 封装好数据返回给前端
+
+### AI-2：卷积神经网络
+
+- 对于图像来说 全连接网络会导致参数过多 比如 100x100 3 通道的图像 有 30000 个参数 全连接层的参数会达到 30000x30000 个 因此需要卷积神经网络
+- 为了提取局部特征 我们采用**卷积核** 卷积核是一个权重矩阵 通过卷积核和图像的卷积来提取特征 卷积核矩阵会和图像的一个区域做按位相乘 然后做累加得到一个值 这个值作为这个区域的特征 比如边缘特征的矩阵是
+
+  ```
+  -1 -1 -1
+  -1  8 -1
+  -1 -1 -1
+  ```
+
+  这是因为如果一个区域是边缘 这个累加就非 0 如果一个区域的颜色基本一致 这个累加就接近 0 这样就把边缘特征提取出来了
+
+- 卷积核的尺寸可以是矩阵 一般为奇数 保证有一个中心点
+- 对图像做卷积会导致图像的尺寸变小 因此需要 padding 来保持图像的尺寸 通常是在图像的外围填充一堆 0 保证卷积后的图像尺寸不变
+- 卷积核的深度和图像的深度是一样的 比如 3 通道的图像就需要 3 个卷积核
+- 池化：把一个区域的值映射到一个值上 比如最大池化就是把一个区域的最大值作为这个区域的值 目的是降低图像的尺寸 从而减少权重参数
+- 如何训练？
+  - 卷积核矩阵的每一个数字都是一个参数
+- 通俗理解 卷积网络负责把一个大图像提取特征为小图像 再把小图像输入到全连接神经网络里进行分类 从而大大减少权重参数 其中卷积层就是对图像做特征提取 池化层就是对特征图像做模糊处理
+- 代码示例：
+
+  ```python
+  model = keras.Sequential(
+      [
+          Input(shape=input_shape, batch_size=32),
+          Conv2D(32, kernel_size=(3, 3), activation="relu"),# 二维卷积层 包含 32 个卷积核 每个卷积核是 3x3 的矩阵 这意味着会产生 32 个特征图像
+          MaxPooling2D(pool_size=(2, 2)),# 最大值二维池化层 池化核是 2x2 的矩阵
+          Conv2D(64, kernel_size=(3, 3), activation="relu"),
+          MaxPooling2D(pool_size=(2, 2)),
+          Flatten(),
+          Dropout(0.5),
+          Dense(num_classes, activation="softmax"),
+      ]
+  )
+
+  model.summary() # 打印模型的结构 包括每一层的参数数量等
+
+  ```
+
+- 参数计算：
+
+  - 卷积层：卷积核的数量 x (卷积核的尺寸 x 输入的深度 + 偏置量)
+
+    以上面第一个 conv 层为例 32 个卷称核 3x3 的卷积核 单通道 1 个偏置量 一共有 32 x (3 x 3 x 1 + 1) = 320 个参数 而输出的尺寸则是 32 x 26 x 26 x 32 即 32 个卷积核 26x26 的图像 批处理大小为 32
+
+    第二个 conv 层的输入应该是 32 张图像 每张图像有 32 个特征图 都是 13x13 的图像 这个 conv 层对于每张图像的 32 个特征图分别做卷积 产生 32 个特征图 然后做加权求和 产生 1 个特征图 于是输出就是 32 张 13x13 的图像 每张图像有 64 个特征图
+
+    同时第二层有 64 个卷积核 尺寸为 3x3 每个卷积核输入的特征图数量是 32 （相当于 32 通道） 所以参数数量是 64 x (3 x 3 x 32 + 1) = 18496
+
+  - 池化层：没有参数
+
+    以第一个池化层为例 2x2 的池化核 没有参数 输出的尺寸是 32 x 13 x 13 x 32 代表 32 个卷积核 13x13 的图像 批处理大小为 32
+
+#### 作业：使用 CNN 训练 CIFAR-100 数据集
+
+- 将参数个数提高即可 加大 batch_size 可以提高收敛速度 基本上最后收敛在 0.97 左右
+- 比较重要的是如何使用 GPU 进行训练 因为 CPU 实在是太慢了
+- 参考链接：https://www.baidu.com/link?url=H3KSUXUjZ47N8E3A9JbgU_h0cexmuXSeWBVPDSXDHnAl_g5J2N0YLwwE_hCxyEaGh_LR1-P5btUiGp90MgiT_NAbksplygXvFMsF9auwMgi&wd=&eqid=84f566d90000822b00000003675c566a 大概就是要降级到 2.6 另外 cuda 可以用 conda 安装 不用装在本机上污染环境了
