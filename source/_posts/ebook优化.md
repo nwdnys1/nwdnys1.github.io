@@ -1,5 +1,5 @@
 ---
-title: 从'一'开始优化Ebookstore
+title: 从'一'开始优化EBOOKSTORE项目
 date: 2024-09-23 14:01:00
 categories: WEB开发
 tags:

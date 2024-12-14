@@ -1,5 +1,5 @@
 ---
-title: 遇到过的bugs以及solutions
+title: 遇到的 Bugs & Sols
 date: 2024-09-07 23:42:00
 categories: WEB开发
 tags:

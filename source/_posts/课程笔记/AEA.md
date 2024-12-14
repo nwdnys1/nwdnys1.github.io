@@ -4,7 +4,9 @@ date: 2024-09-23 14:01:00
 categories: 课程笔记
 tags:
   - 架构
-  - 后端
+  - 事务
+  - 数据库
+  - 深度学习
 index_img:
 banner_img:
 excerpt: " "
@@ -1140,6 +1142,14 @@ excerpt: " "
 
 - 上述索引都可以在 Mongo Compass 中进行可视化创建
 
+#### 作业：使用 MongoDB 存储评论、点赞、回复数据
+
+- 具体实现：导入`spring-boot-starter-data-mongodb`依赖 将 comment 实体的注解改为 @Document 来配置表源 把 Repo 层改为 MongodbRepository，其余逻辑实现和原本使用 MySQL 实现基本一致
+
+  其中需注意 MongoDB 默认分配 id 是 string 类型 为 int 会导致 id 只能为 0 另外 MongoDB 支持 Partial Update 比如新增 reply 时，无需将整个 comment 取出 只需要取出 replies 数组进行局部更新即可省去额外开销
+
+  为了查询一本书的评论更快 我在 bid 字段上建立了索引方便查询 同时也建立了 uid 的索引方便后续实现展示每个用户的评论的功能 上面提到的展示每个用户的回复和点赞 也可以通过建立索引来加快查询 但是当数据量太大时仍会不理想
+
 ## 11.20
 
 ### MongoDB
@@ -1210,6 +1220,17 @@ excerpt: " "
   - Neo4j 是一个图数据库
   - 提供不同语言的 Driver
   - 提供 Neo4j Browser 可视化工具
+
+#### 作业：使用 Neo4j 存储 Tags 数据
+
+- 安装 Neo4j Desktop 并创建一个数据库
+- 在 neo4j 中存储 label 为 tag 的节点 并创建 label 为 RELATE_TO 的边 表示两个 tag 所包含的书籍中有较多重合（比如“日常”和“校园”）
+
+  MySQL 中创建 book_tags 关系表记录 bid 和 tid 的关联 并新建两个接口 一个根据 tid 数组查询所有的 book 数据 一个根据输入的 tid 查找所有相关联的其他 tag 的 id（也就是通过两条边可以连接到的 tag）
+
+  导入 spring-neo4j 的依赖 创建 tag 等实体 repo 层 编写 service 层和 controller 层的逻辑
+
+  前端提供一个 tag 筛选功能 可以选中多个 tag 会展示分类下的书籍分页结果 另外提供一个模糊搜索功能 输入一个 tag 会跳转到对应的搜索结果页面 展示所有相关联的 tag 的书籍（复用上面的 tag 筛选功能）
 
 ## 11.25
 
@@ -1467,6 +1488,10 @@ excerpt: " "
   - IP 哈希（ip_hash）
   - 加权轮询（weight）
 
+#### 作业：部署 Nginx 作为负载均衡
+
+- 为方便使用容器部署 nginx 映射到端口 80 并将 conf 文件挂载到容器中 详细可见[隔壁笔记](https://blog.nwdnysl.site/2024/09/13/%E4%BB%8E%E9%9B%B6%E5%BC%80%E5%A7%8B%E9%83%A8%E7%BD%B2%E8%87%AA%E5%B7%B1%E7%9A%84%E6%9C%8D%E5%8A%A1%E5%99%A8/#%E4%BD%BF%E7%94%A8-Docker-%E9%83%A8%E7%BD%B2-Nginx)
+
 #### MySQL Cluster
 
 - 使用 mysqladmin 可以建立主从复制的 MySQL 集群
@@ -1555,7 +1580,7 @@ excerpt: " "
 - Edge Computing：将计算资源放在离用户最近的地方 比如 CDN、边缘服务器等
 - Computation Offloading：当节点的计算资源不足时 将计算任务分发到其他节点上 或者将计算任务分发到云上
 
-### Graph QL
+#### Graph QL
 
 - RESTful 的风格无法描述用户的需求 比如只取出数据的某些字段
 - GraphQL 是一种 API 查询语言 用于描述客户端如何请求数据
@@ -1568,6 +1593,16 @@ excerpt: " "
   - variables：`query HeroNameAndFriends($episode: Episode) { hero(episode: $episode) { name friends { name } } }`：定义一个变量 在查询时传入
   - `mutation { createReview(episode: JEDI, review: { stars: 5, commentary: "This is a great movie!" }) { stars commentary } }`：创建一条评论
 - GraphQL 相当于把 schema 发送给后端 后端根据 schema 封装好数据返回给前端
+
+#### 作业：实现一个 GraphQL 接口
+
+- 先编写后端 新建一个 controller 类 编写新的查询书籍接口
+
+  其余所有代码逻辑都可以复用 可以直接调用 service 层的 searchBooks 接口 并设置分页为 100 来返回搜索到的前 100 本书籍
+
+  然后编写 schema 文件 包含了 book 类的字段以及查询接口的参数和名字
+
+  最后改写前端 使用 apollo-client 来发送 graphql 的请求 只需要配置一下 client 然后在 index.js 中在 routes 的外层包裹组件即可使用
 
 ### AI-2：卷积神经网络
 

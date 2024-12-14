@@ -1,5 +1,5 @@
 ---
-title: WEB开发技术栈笔记
+title: 技术栈学习笔记
 date: 2024-09-07 23:44:41
 categories: WEB开发
 tags:
