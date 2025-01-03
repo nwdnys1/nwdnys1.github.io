@@ -1559,8 +1559,191 @@ excerpt: " "
 
 ### History
 
-- 单核 CPU 系统 算力上限取决于 Clock Rate 一个时钟周期最多做一次指令 （当然也有使用超标量的方法）
+#### CPU
+
+- 单核 CPU 系统 算力上限取决于 Clock Rate 一个时钟周期最多做一次指令 （当然也有使用 pipeline 和超标量的方法来提高算力）
 - 多核 CPU 系统 算力上限取决于核心数 然而和分布式类似 因此最复杂的还是 cache 中的 coherence 问题
-- SIMD（Single Instruction Multiple Data）：一条指令处理多个数据 也就是只增加 ALU（算术单元）的数量 可以用于向量和矩阵运算 然而需要新的指令集（比如 Intel 的 AVX）增加了代码的复杂度 
+- SIMD（Single Instruction Multiple Data）：一条指令处理多个数据 也就是只增加 ALU（算术单元）的数量 可以用于向量和矩阵运算 然而需要新的指令集（比如 Intel 的 AVX）增加了代码的复杂度
   - 然而性能增益也不可能达到理论的倍增 因为指令可能有依赖
   - 另外访存的带宽也会影响性能 Time= Latency + Payload / bandwidth 有时候访存的时延会成为瓶颈
+  - Roofline Model：刻画算力与带宽的关系图 y 轴是算力 单位是 GFLOP/s 即每秒多少次浮点运算 x 轴是带宽 单位是 Flop/Byte 即读取一个字节数据可以进行多少次运算 于是斜率就是 Byte/s 即应用对于带宽的需求 在斜线下方的应用瓶颈是带宽 在斜线上方的应用瓶颈是算力
+
+#### GPU
+
+- 也是两种方式提升算力：增加核心数和 SIMD
+- GPU 的 ALU 数量远远多于 CPU 因为没有 cache coherence
+- SIMD 难以实现分支条件 但是可以通过 mask 来实现 也就是执行所有分支 但是写回的数据会用条件的 mask 来选择 不过还是会造成很多无用的计算 而且编程变得很复杂
+- 于是出现了 SIMT（Single Instruction Multiple Threads）：没听懂 （说是超纲了） 应该就是相当于用户指定某一个线程执行某一个任务
+- Tensor Core：专门用于矩阵运算的核心 替换掉了原来的 ALU 用于加速矩阵运算
+- TPUs（Tensor Processing Units）：谷歌的专门用于矩阵运算的芯片
+
+#### Summary
+
+- 单个设备的算力由于种种限制没法无限提高（比如主频是因为散热问题 多核是因为芯片面积问题等）连老黄的显卡的提升也只是因为使用了 tensor core 或是增加了核心数
+- 于是就需要分布式计算
+
+## LEC 23: Distributed Computing: Batch Processing
+
+- 分布式计算带来了更高的算力 但是也带来了更多问题 比如编程复杂性、网络通信的延迟等
+- Batch Processing：批处理 比如统计很多网页中最受欢迎的网页
+- 基本思想是分治 比如求 TopK 就可以分成求每个节点的 TopK 然后再合并起来求全局的 TopK
+- Challenges for Programmers
+  - Sending data to/from nodes
+    - RPC 不够高效
+  - Coordinating among nodes
+  - Recovering from failures
+    - 规模效应：规模越大 越有可能出现 failure 比如 GPU 风扇积尘
+    - 有两种方式来处理 failure
+      - 重做 确保每一个操作都没有 side effect（时间上的冗余）
+      - 设计一个可靠的系统 比如 GFS（空间上的冗余）
+    - MapReduce 的 fault tolerance
+      - 通过心跳来检测节点是否存活
+      - 通过重置初始状态并 re-execute 来进行 recovery
+      - master 的 failure 通过 checkpoint 来恢复 即 master 的状态会被持久化到 GFS 中 每隔一段时间进行写入
+      - MapReduce 可能会因为第三方库而遇到各种 bug 其处理方式是简单的 skip
+  - Optimizing for locality
+    - 希望数据可以缓存在本地
+    - master 会把 map 任务分配给存储了这一部分数据的节点 保证数据在本地
+  - Partitioning data for parallelism
+
+### MapReduce
+
+- MapReduce 是 Google 提出的一种分布式计算框架
+- Interface
+  - Map：输入一组值 进行某种操作 输出一组键值对 相当于将输出分到了不同的桶中 便于 reduce 可以并行处理
+  - Reduce：输入一组键值对 进行某种操作 输出一个值 一个 reducer 处理一个键的所有值
+- 用户只需要考虑如何将操作变为 Map 和 Reduce 即可 其他的由 MapReduce 框架来处理
+- 工作流程：mapper 处理完数据产生一堆键值对 传输给多个 reducer 进行处理 其中
+
+  1. 把输入数据分成 多个 shards 一般是 64MB 一个（因为是 GFS 的块大小）
+  2. master 启动多个 mapper（通过 RPC fork）
+  3. mapper 读取数据进行处理 产生键值对（先放内存 异步落盘）
+  4. 键值对会根据 shard 放到同一个 immediate file 中 方便顺序读取
+  5. 将 intermediate data 排序 确保相同的 key 在同一个文件中 reducer 就可以读取到所有的 value 这个排序可以使用归并 即 mapper 产生的数据已经是有序的 之后再 merge 一下即可
+  6. reducer 读取数据进行处理 产生结果
+  7. 返回结果给用户
+
+- 应用
+
+  - url 计数
+  - 倒排索引的构建
+
+- Summary
+  - 易扩展
+
+## LEC 24: Distributed Computing: Distributed Computing Frameworks
+
+### Computation Graph
+
+- 一个计算图是由节点和边组成的 一个节点代表一个数据或计算 一个边代表依赖关系
+- 复杂的并发的任务可以被表示为一个计算图 几乎可以表示所有分布式计算任务
+- DAG 的容错比较好 因为可以通过依赖关系找到上一个有数据的节点 从而重新计算
+- Job Manager（即 master）会看哪个节点的依赖关系已经满足了 然后分配任务
+- 举例：神经网络
+  - 任意一层的计算可以表示为 x\*W->y 其中 x 是输入向量 W 是权重矩阵 y 是激活函数
+  - 可以根据计算图推出梯度的计算图
+  - 将计算和硬件解耦 可以在不同的硬件上运行
+- Graph fusion：将多个节点合并成一个节点 减少通信开销
+- Parallelism（只考虑 sync 因为 async 基本没人用）
+  - Data Parallelism：将数据分成多个 batch 分别计算 比如累加梯度
+    - 关键操作被成为 all-reduce 比如累加操作中的 sum 操作 其开销决定了整个计算的性能
+    - 而在 all-reduce 中主要的开销是通信开销 一是减少通信量 二是尽可能减少并发通信
+    - 一种方法是 每个节点负责一部分的 all-reduce 整体的通信量是 O(P) 但是有 fan-in 的问题
+    - 另一种方法是顺序发送 等待上一个节点发送完后再发送 通信量不变
+    - 还可以进一步进行 sharding 一个节点只负责某一个参数的 reduce 也可以减少通信量 一般需要使用 rpc 进行同步 保证不同节点发送数据在不同时间
+    - 一种更好的方法是使用 ring allreduce 每个节点只需要和相邻的节点通信 最终数据会汇总到某一个节点上 最终再进行广播 不过这个方法会导致每个参数的 reduce 顺序不一样 如果不满足交换律则会导致结果不一样（比如浮点数的加法）最终的通信量是 O(N)
+    - Tree Allreduce：二分 reduce 的方法 即每个节点和两个子节点 reduce 最终汇总到根节点上 最终再进行广播 然而负载并不均衡 于是使用 Double Binary Tree Allreduce 会将二叉树进行翻转 保证负载均衡
+  - Model Parallelism：将模型分成多个部分分别计算
+    - 把模型的不同层或者每一层的不同参数分配到不同的节点上（水平或垂直切分）
+    - 按照不同层划分也叫 Pipeline Parallelism 因为节点之间有依赖关系 即上一层计算完了才能计算下一层
+    - 通过把 batch 进一步划分为多个 micro-batch 可以减少 pipeline 的 bubble（空闲时间）理想情况下 bubble 由 p-1 变为(p-1)/m 其中 p 为 partition 的个数 m 为 micro-batch 的数量 即增加 m 或者减少 p 都可以减少 bubble 然而增加 m 会导致 batch 太小 GPU 性能下降 此时只能增大 batch size 然而这会影响模型的收敛 p 也不能无限制减少 因为我们切分模型就是为了减少单个节点的参数量
+    - 于是需要 Tensor Parallelism 将参数矩阵切分为多个子矩阵 分配给不同的节点 其通信量比 Pipeline Parallelism 更大
+    - Summary
+      - Pipeline Parallelism：
+      - Tensor Parallelism：
+  - 实际情况会使用 3D Parallelism 即同时使用上述三种方法
+
+## LEC 25: Distributed Computing: Distributed Training
+
+## LEC 26: Distributed Computing: Distributed Training 2
+
+## LEC 27: Security: Intro
+
+- 为什么不用 fault tolerance 来保证安全性？
+
+  - fault 的影响可能是非常巨大的
+  - fault 一般是随机的 而 attack 是有关联的
+
+- 2 Steps to Security
+
+  - Goals（Policy）：保护什么
+    - Confidentiality：限制谁可以读数据
+    - Integrity：限制谁可以修改数据
+    - Availability：保证服务一直可用
+  - Threat Model（Assumptions）：假设什么
+    - 威胁模型是对于攻击者的一种假设 包括了攻击者的能力和目标
+
+- Authentication
+
+  - knowledge-based：密码 安全问题
+  - have-based：门卡 钥匙
+  - are-based：指纹 人脸识别
+
+- Password
+
+  - Timing Attack：通过密码验证的时间来判断密码是否正确 比如某些密码的匹配会导致内存换页 从而导致时间变长 于是可以确定每一个字符是否正确 解决方法是比对密码的 hash 而不是密码本身
+  - Rainbow Table：通过预先计算出所有可能的密码的 hash 来进行破解 比如最常用的 30 个密码 解决方法是加盐 即在密码后面加上一串随机字符串再进行 hash 虽然不能防止攻击 但是会大大增加攻击的成本
+  - Strawman：比如对于 Session 是<username,expire_time>的哈希值 则用户"BEN"与"BEN2"可能会有相同的哈希值 因此不能简单拼接字符串
+  - Phishing Attack：通过伪装的网站来获取用户的密码 比如 baidu.com 和 baidv.com
+  - Techs
+
+    1. 本地计算哈希 每次 server 发送一个随机值给 client client 计算<password,random>的哈希值发送给 server 缺陷是必须保存明文
+    2. 反向验证 让 server 发送给 client 密码 确保 server 是安全的
+    3. 要求在线登录 服务器可以发现攻击者的可疑行为
+    4. specific pwd：不同的网站使用不同的密码
+    5. n-time pwd：服务器保存密码计算 100 次的哈希值 第一次登录时客户端发送 H99 服务器再哈希一次进行对比 然后保存 H99 第二次登录发生 H98 以此类推
+
+       另外 安全令也是一种方法 它会离线每隔 10s 计算新的哈希值
+
+    6. 绑定 auth 与 request：在操作时 即使已经登录 也需要再次验证密码
+    7. FIDO：把指纹与密码绑定在一起 验证指纹通过后 程序将使用私钥对服务器发来的数据进行签名 然后返回 服务器发送的数据是由 uid 与公钥（即密码）加密的
+
+  - Bootstrapping
+    - 如何修改密码？一般会发送一个 url 给用户 这个 url 包含了一个由随机数生成的 token 用于验证用户的身份 事实上服务器的随机数是由一些状态生成的 比如键盘鼠标的输入 网络包的状态等
+
+- Principles
+
+  - Least Privilege：只给予最小的权限
+  - Least Trust：不要相信任何人
+
+## LEC 28: Security: ROP and CFI
+
+### ROP（Return Oriented Programming）
+
+- 通过向栈中注入一些指令来实现攻击
+- DEP（Data Execution Prevention）：禁止执行数据段的代码
+- Code Reuse Attack：通过将代码段中的指令串联起来来实现攻击
+- ROP Chain：通过将代码段中的指令串联起来来实现攻击
+- Defenses
+  - 
+  - ASLR（Address Space Layout Randomization）：随机化内存地址
+  - Canary：在栈中插入一些特殊的值 一旦被修改则说明栈被破坏了
+
+### CFI（Control Flow Integrity）
+
+- 通过检查程序的控制流来防止攻击
+- Branch Types
+  - Direct Branch：直接跳转
+    - CALL：调用函数
+    - JUMP：跳转
+  - Indirect Branch：间接跳转
+    - RET：返回
+    - JMP RAX：跳转到 RAX 寄存器中的地址
+    - CALL RAX：调用 RAX 寄存器中的地址
+
+- 通过加入cmp指令来检查控制流是否正确 不兼容其他库 可以用prefetch解决
+## LEC 29: Security: Control Flow Integrity & Secure Data Flow
+
+
+
+## LEC 30: Privacy & Review

@@ -752,51 +752,53 @@ excerpt: " "
 
 #### Index
 
-- 把数据表的某一个或多个字段的值作为键 数据项的指针作为值 存储在一个 B+ 树中 从而做到对数时间的查找
-- 多了空间开销和时间开销（UPDATE 时需要维护） 建议使用在数据量大的表上
-- 内存中也可以建立一些哈希索引
-- InnoDB 对于全文索引使用了反向映射
+- 把数据表的某一个或多个字段的值作为键 实际数据行的指针作为值 存储在一个 B+ 树中 从而做到对数时间的查找
+- 索引并非越多越好 因为会产生额外的空间开销和时间开销（UPDATE 时需要维护） 建议使用在必需的情况下（数据量大且查询频繁的字段）
+- MySQL 的大部分索引（主键、唯一、普通）都是 B+ 树索引 除此之外 空间索引使用 R 树 内存表支持哈希索引 而 InnoDB 的全文索引是基于倒排索引的
 - 聚簇索引：索引的实际位置和数据的实际位置一样 在 InnoDB 中主键索引就是聚簇索引
 - 不建议在 NOT NULL 字段上建立索引 因为会增加空间开销 如果需要置空 可以人为使用一个特殊值来代替
-- Index Prefix
-  - 对于特别长的数据字段 只取数据的前 N 个字符做索引
-  - row format
-    - compact：索引的前缀是固定的
-    - dynamic：索引的前缀是动态的
-    - compressed：索引的前缀是压缩的
-    - Redundant：索引的前缀是冗余的
-- FULLTEXT Index：全文索引 适用于文本字段的搜索
-- Spatial Index：空间索引 适用于地理位置的搜索
-- MySQL 最多支持在 16 个字段上建立索引 查询时从左到右匹配索引
+- Index Prefixes
+  - 对于特别长的数据字段 只取数据的前 N 个字符做索引 可以减少空间开销
 - 复合索引
+  - MySQL 最多支持在 16 个字段上建立索引 查询时从左到右匹配索引
   - 最左匹配原则：从左往右匹配 如果是等值查询可以继续 否则就停止
+- 升序与降序
+  - 使用`ASC`与`DESC`来指定索引的顺序 默认为升序
+  - 查询时如果使用了`ORDER BY`语句 会根据其顺序来匹配索引 匹配到了则会提高查询效率
 
 #### Foreign Key
 
-- 如果对于不同字段的查询频率不一样 可以使用外键进行垂直分表
+- 如果对于不同字段的查询频率不一样 可以使用外键进行垂直分表 比如 users 拆分为 user_auth 和 user_info
 
 #### Database Structure
 
 - 字段
-  - 使用数值类型来存储数值可以减少空间开销
-  - 尽量使用 NOT NULL
-- Row Format
-  - InnoDB 采用了各种方式来减少空间开销
+  - 使用数值类型来存储数值可以减少空间开销 甚至可以使用 MEDIUMINT 代替 INT 来节省空间
+  - 尽量使用 NOT NULL 一方面对索引有好处 另一方面可以减少额外一位 bit 的空间开销
+- Row Formats
+  - DYNAMIC：默认的行格式 适合 TEXT 和 BLOB 类型的字段
+  - COMPACT：适合大部分的数据类型
+  - COMPRESSED：适合重复的文本或数字字段 会进行前缀压缩
+  - REDUNDANT：存在大量冗余 不建议使用
 - Index
-  - 主键需要尽可能小 可以采用自增的方式 也可以采用 UUID 自增由于只能顺序写入 需要很大的开销保证唯一性 UUID 则可以分布式生成 但是会增加空间开销
+  - 主键需要尽可能小 可以采用自增的方式 也可以采用 UUID
+    - 自增由于只能顺序写入 需要很大的开销保证唯一性
+    - UUID 则可以分布式生成 但是会增加空间开销
   - 仅在多读少写、数据量大的表上建立索引
-  - 索引键需要尽可能小才能保证速度 所以对于字符串字段可以使用前缀索引
-- Join
-  - join 的两列尽量使用相同的数据类型和字段名
+  - 索引键需要尽可能小才能保证速度 所以对于长字符串的字段可以使用前缀索引
+- Joins
+  - join 的两列尽量使用相同的数据类型和字段名 可以加速 join 的速度
 - Normalization
-  - 适当的范式化可以减少冗余 但是会增加 join 的开销
+  - 适当的范式化可以减少冗余 但是会增加 join 的开销 需要根据实际情况作取舍
 - Data Type
-  - 尽量使用数值类型来存储数值
+  - 尽量使用数值类型来存储类似学号的字段
+  - 使用 binary collation order 来对文本进行排序（如果不需要区分大小写）这会使得文本全部以二进制形式比较 减少开销
+  - 比较不同的字段时 尽量使用相同的字符集与排序规则 使得避免转换的开销
   - 小于 8KB 的数据可以使用 VARCHAR 大于 8KB 的数据应该使用 BLOB 因为如果数据太大会导致一次访问内存页面连一个数据都读不完
 
 #### Many Tables
 
-- table_open_cache：打开的表的数量
+- table_open_cache：打开的表的数量 比如当前有 200 个连接 一个连接最多可以打开 64 个表 那么 table_open_cache 就应该设置为 200\*64=12800
 - max_connections：最大连接数
 
 #### Limits on MySQL
@@ -815,44 +817,67 @@ excerpt: " "
 
 ### MySQL Optimization
 
-#### Opimization for InnoDB Tables
+#### InnoDB Tables
 
-##### Tables
+##### Storage Layout
 
 - 一旦表的大小达到几百兆 可以使用 OPTIMIZE TABLE 指令来优化表 会把碎片整理到一起 并重建索引
 - 一个长主键会浪费磁盘空间 因此建议创建一列自增列作为主键
 - 尽量使用 VARCHAR 而不是 CHAR 因为前者可以压缩空间 除非确定这个字段的长度是固定的（比如学号）
 - 对于具有很多重复文本或数字的字段 考虑使用 COMPRESSED 行格式（比如学号都具有相同的前缀）对于数值类型 会选定一个基准值 然后存储相对于基准值的差值
-- 默认情况下 每一条 MySQL 语句会在一个事务里执行 因此会在每一条语句后落盘 会造成很大的额外开销 可以通过 SET AUTOCOMMIT=0 来关闭自动提交 然后使用 START TRANSACTION 和 COMMIT 指令来手动提交
-- InnoDB 实际会对只读语句自动优化 关闭事务和自动提交
+
+##### Transactions
+
+- 默认情况下 每一条 MySQL 语句会在一个事务里执行 因此会在每一条语句后落盘 会造成很大的额外开销 可以通过 `SET AUTOCOMMIT=0` 来关闭自动提交 然后使用 START TRANSACTION 和 COMMIT 指令来手动提交
+- 如果打开 AUTOCOMMIT InnoDB 会识别出只包含一条 SELECT 语句的只读事务 并优化性能（如复用缓存）
 - 尽量避免在 INSERT、UPDATE、DELETE 大量的数据后执行事务的回滚 因此少做大事务
 - 增加 buffer pool 的大小可以使得数据进行缓存 减少磁盘的读写 注意多个实例共享一个 buffer pool
-- SET INNODB_CHANGE_BUFFERING=all 可以设置 UPDATE 和 DELETE 操作会被缓存 而不是直接写入磁盘 否则只有 INSERT 会被缓存
+- `SET INNODB_CHANGE_BUFFERING=all` 可以设置 UPDATE 和 DELETE 操作会被缓存 而不是直接写入磁盘 否则只有 INSERT 会被缓存
 - 一条大数据量的语句会导致锁表 尽量不要在过程中执行 COMMIT
 - 长时间的事务由于锁表还会导致 InnoDB 无法在其他事务中操作数据 除非降低隔离级别
-- 在一次性导入大量数据时 可以暂时关闭自动提交 手动建立一次事务来导入数据 同理也可以通过 SET UNIQUE_CHECKS=0 和 SET FOREIGN_KEY_CHECKS=0 来暂时关闭唯一性检查和外键检查
+- 使用`START TRANSACTION READ ONLY`可以手动指定只读事务 会提高性能
+
+##### Bulk Data
+
+- 在一次性导入大量数据时 可以暂时关闭自动提交 手动建立一次事务来导入数据 避免每一次 INSERT 都造成日志的写入
+- 同理也可以通过 SET UNIQUE_CHECKS=0 和 SET FOREIGN_KEY_CHECKS=0 来暂时关闭唯一性检查和外键检查 提高性能
 - 使用多行 INSERT 语句可以减少客户端和服务器之间的通信次数
-- 对于自增字段进行大量 INSERT 时 SET INNODB_AUTOINC_LOCK_MODE=2 而不是 1 此时会给每个线程分配一个自增值范围 而不是一个值 字段可能不会严格递增
+- 对于自增字段进行大量 INSERT 时 `SET INNODB_AUTOINC_LOCK_MODE=2` 而不是 1 此时会给每个线程分配一个自增值范围 而不是一个值 字段可能不会严格递增
+
+##### Queries
+
 - 因为主键会自动创建聚簇索引 所以尽量选择经常进行范围查询的字段作为主键
+- 主键不要设为复合或者长字段 因为主键的值会被存储在每一个二级索引中
+- 对于二级索引 尽量使用小复合索引而不是独立的单个索引 这样可以为多种查询提供优化
 - 索引字段不要设置为 NULL
+
+##### Disk I/O
+
+- 提高 innodb_buffer_pool_size 的大小可以减少磁盘的读写次数
 - 调整 INNODB_FLUSH_METHOD 参数为 O_DSYNC 会使得文件和文件元数据异步写入磁盘
 - 调整 INNODB_FSYNC_THRESHOLD 参数 可以减少磁盘的写入次数
 - 使用非旋转介质的磁盘可以提高随机访问性能 可以把数据文件放到 SSD 上 把日志文件放到 HDD 上
-- 提高 IO 能力可以减少 backlog 的开销
+- 提高 innodb_io_capacity 参数的值可以提高磁盘的读写性能 从而避免 backlogs（checkpoints 和 log writes）
 - 使用 TRUNCATE TABLE 而不是 DELETE FROM TABLE 因为后者还是会遍历每一行数据 前者则是直接删除指针 如果有外键 需要注意顺序
 - 主键尽量避免修改 并且在创建表时就确定好
+
+#### MEMORY Tables
+
 - 内存表通常是用于临时存储数据的 非关键且只读少写的数据可以存在内存表里
+- 内存表可以使用 HASH 或者 BTREE 两种索引 针对不同场景建立不同的索引
 
-##### Caching
+#### Caching
 
-- `--innodb_buffer_pool_size`：缓存池的大小 默认是 128MB 必须是实例数 \* chunk_size 的整数倍
-- `--innodb_buffer_pool_instances`：缓存池的实例数 默认是 8 最多是 64
+- `innodb_buffer_pool_chunk_size`：缓存池的块大小 默认是 128MB
+- `--innodb_buffer_pool_instances`：缓存池的实例数 默认是 1 最多是 64
+- `--innodb_buffer_pool_size`：缓存池的大小 必须是实例数 \* 块大小的整数倍 比如 16 个实例 128MB 的块大小 那么缓存池的大小就是 2GB 的整数倍 这是为了可以把缓存池均匀分配到不同的实例上
 - 建立多实例缓存池后 同一张表就可以在多个缓存池里缓存
-- 缓存池的替换策略不是 LRU 而是根据数据的热度来替换 会把新数据放到 3/8 的队列位置 如果是冷数据立马就会被替换 热数据在内存里被访问时则会被放到队尾 还会做一定的数据迁移
+- 缓存池的替换策略不是单纯的 LRU 而是根据数据的热度来替换 会把新数据放到 3/8 的队列位置 队里的数据被访问时则会被放到队尾 如果是冷数据则会迅速的被挤到队头移出 还会做一定的数据迁移 把热数据放到其他地方
 - 预读取会把其他数据读取到缓存里 可以顺序预读取 也可以随机预读取
 - `innodb_page_cleaners`：将脏页落盘的清理线程数量 默认是 4 不会超过缓存池的实例数
-- `innodb_max_dirty_pages_pct_lwm`：脏页的最大比例 默认是 10% 会触发脏页的清理
+- `innodb_max_dirty_pages_pct_lwm`：脏页的最大比例 默认是 10% 会触发脏页的清理 0 表示不会触发
 - 为了减少 warm-up 的时间 InnoDB 会把缓存池中最常用的页存到磁盘上 并在重启时直接 restore 到缓存池里 持久化的比例由`innodb_buffer_pool_dump_pct`决定 默认是 25%
+- MySQL 还会缓存语句的处理结果
 
 ## 11.11
 
@@ -869,6 +894,7 @@ excerpt: " "
 - Remote Backup：远程控制机器进行备份
 - Snapshot Backup：快照备份 增量备份的一种 通过 COW 来记录每一次修改 当改变达到阈值后进行一次全量备份 MySQL 本身不支持 必须使用 LVM 或者 ZFS 等文件系统
 - Full/Increment Backup：启动 MySQL 的 binlog 功能 可以记录每一次修改的日志 通过备份时的 binlog 来进行增量备份
+- Backup 还可以做 schedule（定时备份）、compression（压缩备份）、encryption（加密备份） 不过 MySQL 本身不支持这些功能 需要使用其他工具
 
 #### Database Backup Methods
 
@@ -876,12 +902,12 @@ excerpt: " "
 - 如果使用社区版：
   - 逻辑备份可以用 mysqldump 来实现 使用`--single-transaction`参数可以在备份时不锁表 可读不可写
   - 物理备份时需要保证内存落盘 使用`FLUSH TABLES tbl list WITH READ LOCK`来落盘 同时上锁 可读不可写
-  - 使用`--tab`参数可以额外导出一个 csv 文件 使用`SELECT * INTO OUTFILE 'file_name' FROM tbl_name`可以导出文本文件
-  - MySQL 支持使用 binary log 来进行增量备份 当进行全量备份时 使用`FLUSH LOGS`来落盘之前的 binlog
-  - 使用主从复制 老生常谈了 不赘述 主要是备份方法时切换到从库上进行备份
+  - 使用`SELECT * INTO OUTFILE 'file_name' FROM tbl_name`可以导出定界文本文件 只保存数据不保存结构 另外使用 mysqldump 加上`--tab`参数也可以导出定界文本文件 想要重新导入只需要使用`LOAD DATA`与 mysqlimport 即可
+  - MySQL 支持使用 binary log 来进行增量备份 当进行全量备份时 使用`FLUSH LOGS`来切换日志文件
+  - 使用主从复制 老生常谈了 不赘述 只需要在崩溃时把从库提升为主库即可 备份恢复则是在从库上进行
   - 如果使用 MyISAM 可以使用`REPAIR TABLE`来修复表
 
-#### An Example of Backup and Recovery
+#### An Example
 
 - 遇到断电或操作系统宕机时 我们可以认为磁盘数据是安全的 此时 InnoDB 会自动对 log 进行恢复
 - 文件系统崩溃或其他硬件问题 导致磁盘数据损坏 需要格式化磁盘 并且需要从备份中恢复
@@ -895,17 +921,19 @@ excerpt: " "
   - 若数据库损坏 使用以下策略防止数据丢失
     1. 启用 binlog 来进行增量备份
     2. 使用 mysqldump 来进行定期的全量备份
-    3. 使用`FLUSH LOGS`来定期把 binlog 落盘
+    3. 使用`FLUSH LOGS`来定期切换新的日志文件
 
-#### mysqldump for Backups
+#### Using mysqldump
 
+- mysqldump 是一个备份工具 可以备份数据库或者表 使用 mysqlimport 可以导入这些备份文件
 - dump 文件可以用于恢复数据库 也可以用于主从复制 也可以用于实验
-- `--tab`会多生成一个 csv 文件
+- `--tab`会多生成一个 tab-delimited 文件 否则只生成一个 sql 文件
+- `--database`相当于在文件中加上`USE database`语句 因此如果想要导入为其他名称的数据库 不要使用这个参数
 - 各种指令用法详见 ppt
 
 #### Point-in-Time Recovery
 
-- PITR 是指恢复数据库到某个时间点的状态
+- PITR 是一种增量备份 即将数据恢复到某个时间点的状态 在 MySQL 中可以使用 binlog 来实现
 - 注意 mysqlbinlog 不应该起多个线程并行执行多个 binlog 内的语句之间可能会有依赖关系 正确做法是在一条指令内执行多个 binlog
 - 使用`--start-datetime`和`--stop-datetime`来查看小时间段内的 binlog 找到需要的 position
 - 使用`--start-position`和`--stop-position`来指定恢复的范围 可以跳过一部分 binlog 这样就可以跳过某些失误的操作
@@ -964,13 +992,13 @@ excerpt: " "
   );
   ```
 
-  - `INSERT IGNORE INTO employees VALUES` 会忽略插入失败的数据 只插入属于某个分区的数据
+  - `INSERT IGNORE INTO employees VALUES` 会忽略因为分区不匹配而插入失败的数据 比如上面的表中插入了一个 region 为 'OTHER' 的数据会被忽略
   - 想要插入不属于任何分区的数据 可以使用`PARTITION pOther VALUES IN (DEFAULT)`来插入
   - NULL 会被当做某一个离散值来处理 如果没有对应的分区则会插入失败
-  - RANGE 和 LIST 分区支持以下类型
-    - 所有整数类型 包括 TINYINT、SMALLINT、MEDIUMINT、INT、BIGINT 不支持 FLOAT 和 DECIMAL 类型
-    - 所有日期和时间类型 包括 DATE、DATETIME、TIMESTAMP、TIME、YEAR
-    - 所有字符串类型 包括 CHAR、VARCHAR、BINARY、VARBINARY 不支持 TEXT 和 BLOB 类型 因为是指针
+  - RANGE 和 LIST 的多列分区有如下限制
+    - 支持整数类型 包括 TINYINT、SMALLINT、MEDIUMINT、INT、BIGINT 不支持 FLOAT 和 DECIMAL 类型
+    - 支持日期和时间类型中的 DATA、DATETIME 其他的不支持
+    - 支持字符串类型 包括 CHAR、VARCHAR、BINARY、VARBINARY 不支持 TEXT 和 BLOB 类型 因为是指针
 
 - Hash Partitioning：根据某个字段的哈希值来分区 由用户定义
 
@@ -1053,13 +1081,13 @@ excerpt: " "
 
 #### Partitioning Management
 
-- `ALTER TABLE employees PARTITION BY RANGE (YEAR(joined)) PARTITIONS 4;`会重新分区 但是会把数据全部拷贝一遍
 - RANGE 分区的范围应该尽量和未来的查询范围相匹配 使得查询可以在一个分区内完成
-- `ALTER TABLE employees DROP PARTITION p0;`会删除分区以及其数据 分区的范围仍然会保留连续性
+- `ALTER TABLE employees PARTITION BY RANGE (YEAR(joined)) PARTITIONS 4;`会重新分区 但是会把数据全部拷贝一遍
+- `ALTER TABLE employees DROP PARTITION p0;`会删除分区以及其数据 分区的范围仍然会保留连续性　也就是说其会合并到右边的分区
 - `ALTER TABLE employees ADD PARTITION (PARTITION p0 VALUES LESS THAN (1991));`会添加一个新的分区 范围必须大于已有的分区 对于 LIST 则不能重复
 - `ALTER TABLE employees REORGANIZE PARTITION p0 INTO (PARTITION p0 VALUES LESS THAN (1991), PARTITION p1 VALUES LESS THAN (1996));`会重新组织分区 可以分裂分区 也可以合并分区
 - HASH 和 KEY 不允许删除分区 因为数据会被重新分布 但是可以合并分区 使用`ALTER TABLE employees COALESCE PARTITION 4;`来合并分区
-- `ALTER TABLE employees EXCHANGE PARTITION p0 WITH TABLE employees_archive;`会用分区交换表 但是表的结构必须和分区的结构一样 也不能有外键约束 不能有分区 表内不能有分区外的数据 加上`WITHOUT VALIDATION`可以跳过分区范围的检查 但是会真的插入不合法的数据 需要后续手动检查
+- `ALTER TABLE employees EXCHANGE PARTITION p0 WITH TABLE employees_archive;`会用分区交换表 但是表的结构必须和分区的结构一样 也不能有外键约束 不能有分区 表内不能有分区外的数据 加上`WITHOUT VALIDATION`可以跳过分区范围的检查 但是会真的插入不合法的数据 需要后续手动检查 这条指令可以用于归档数据、数据迁移等
 - 还有很多指令可以维护分区表
   - REBUILD PARTITION
   - OPTIMIZE PARTITION
@@ -1100,12 +1128,14 @@ excerpt: " "
   - 键的顺序会区分不同的文档
   - 键不能包含`.` `$` `null` 且不能是空字符串 且不能是`_`开头的保留字
   - 键值是类型敏感和大小写敏感的
+  - 允许重复的键
 - Collection：类似于表 由多个 Document 组成
+  - 不能以""命名 不能以`system.`开头
   - schema-free：不对文档的结构做任何限制
   - 文档的分表需要遵循 data-locality 原则，即相关的文档应该存储在一起
-  - Subcollection：类似于垂直分表 但是表之间不会有任何关联
+  - Subcollection：类似于垂直分表 但是表之间不会有任何关联 比如`blog.posts`和`blog.comments` 但是它们与`blog`之间没有关联 可以看做是 namespace
 - Database：类似于数据库 由多个 Collection 组成
-  - 不同的数据库会被存储到不同文件
+  - 不同的数据库会被存储到不同文件 也拥有不同的权限 最好的做法是一个数据库只存储一个应用的数据
   - 保留数据库
     - admin：存储用户信息
     - local：存储本地数据 不会被复制
@@ -1139,7 +1169,6 @@ excerpt: " "
 
 - Normal Index：`db.collection_name.createIndex({key: 1})`：升序索引 `db.collection_name.createIndex({key: -1})`：降序索引
 - Geospatial Index：`db.collection_name.createIndex({key: "2dsphere"})`：地理位置索引 值需要是含两个数值的数组
-
 - 上述索引都可以在 Mongo Compass 中进行可视化创建
 
 #### 作业：使用 MongoDB 存储评论、点赞、回复数据
@@ -1198,19 +1227,19 @@ excerpt: " "
     - inUse：是否被使用 (1 Byte)
     - nextRelId：第一条边的 ID (4 Bytes)
     - nextPropId：第一个属性的 ID (4 Bytes)
-    - labels：节点的标签 (5 Bytes)
-    - extra： (1 Byte)
+    - labels：节点的标签的 ID (5 Bytes)
+    - extra：备用位 (1 Byte)
   - 边占 34 Bytes
     - inUse：是否被使用 (1 Byte)
-    - firstNode：起始节点的 ID(4 Bytes)
+    - firstNode：起始节点的 ID (4 Bytes)
     - secondNode：终止节点的 ID (4 Bytes)
     - relationshipType：关系的类型 (4 Bytes)
     - firstPrevRelId：起始节点的前一条边的 ID (4 Bytes)
     - firstNextRelId：起始节点的后一条边的 ID (4 Bytes)
     - secondPrevRelId：终止节点的前一条边的 ID (4 Bytes)
     - secondNextRelId：终止节点的后一条边的 ID (4 Bytes)
-    - nextPropId：第一个属性的 ID (4 Bytes)
-    - firstInChainMarker： (1 Byte)
+    - nextPropId：下一个属性的 ID (4 Bytes)
+    - firstInChainMarker：是否是链的第一条边 (1 Byte)
 
 - Neo4j 嵌入到 Spring Boot 中
 
@@ -1243,11 +1272,10 @@ excerpt: " "
 ##### LSM-Tree：Log-Structured Merge-Tree
 
 - Basics
-  - 一种分层、有序、面向磁盘的数据结构
-  - 核心思想是利用磁盘的顺序写性能
-  - 分层为内存层和磁盘层 memtable 写满后会和 immutable memtable 互换
-  - 以 Append-Only 的方式写入数据
-  - 适用于写多读少的场景
+  - 一种分层、有序、面向磁盘的数据结构 以 Append-Only 的方式写入数据
+  - 核心思想是利用磁盘的顺序写性能 但是牺牲了部分读取性能 适合写多读少的场景
+  - 分层为内存层和磁盘层 memtable 写满后会和 immutable
+    memtable 互换
 - Pros & Cons
   - 优点
     - 插入性能高
@@ -1255,23 +1283,21 @@ excerpt: " "
     - 访问新数据快 适合实时数据
     - 数据热度和 level 有关
   - 缺点
-    - 牺牲了读性能
+    - 牺牲了读性能（一次可能访问多个层）
     - 读、写放大率高（读放大是因为查找旧数据时需要遍历很多 sstable；写放大是因为触发多次 compaction）
 
 ##### RocksDB
 
-- 由 Facebook 开发的 LSM-Tree 数据库 支持嵌入式存储
+- 由 Facebook 开发的 LSM-Tree 键值数据库 支持嵌入式存储
 - RocksDB 适于存储热点数据 当超过限制层数时 可以考虑迁移到其他数据库
 
 - Hybrid Transactional/Analytical Processing：混合事务/分析处理
 
   - OLTP：Online Transaction Processing 在线事务处理
-    - 低延迟 高并发 数据量小
-    - 比如下订单
+    - 低延迟 高并发 数据量小 比如下订单
     - 数据存储应该是行存储 保证一个记录的数据是连续的 避免随机访问
   - OLAP：Online Analytical Processing 在线分析处理
-    - 高延迟 低并发 数据量大
-    - 比如后台统计数据
+    - 高延迟 低并发 数据量大 比如后台统计数据
     - 数据存储应该是列存储 保证一个字段的数据是连续的 避免随机访问
 
 - RocksDB 为了支持 HTAP 将数据按照字段进行了拆分存储（也就是垂直分表）
@@ -1282,36 +1308,37 @@ excerpt: " "
 
 - 写阻塞问题
   - RocksDB 将数据写入内存后立马返回 后台会异步的将数据写入磁盘
-  - Compaction 的归并过程无法多任务执行 并且写放大严重 会导致写阻塞
+  - 显然 L0 层满时会阻塞内存落盘的过程 此时会导致写阻塞
+  - L0 往下的 Compaction 过程无法多任务执行
+  - Compaction 写放大严重 会导致磁盘性能成为瓶颈
   - Solution
-    - 在 RocksDB 和数据源之间加一个收集分发层 有许多 collector 负责缓存数据
+    - 在 RocksDB 和数据源之间加一个收集分发层（比如 flink） 有许多 collector 负责缓存数据
     - master 负责监控 collector 的状态 根据剩余内存大小进行负载均衡
 - 读放大问题
   - 需要访问所有可能的 sstable 才能找到数据
   - Solution
     - 通过 Bloom Filter 来过滤不可能存在的数据
-    - 在 RocksDB 中增加列式存储 进行混合存储 以减少读放大
+    - 在 RocksDB 中增加列式存储 适合 AP 处理
 
 #### Vector DB
 
 - 人工智能中往往会产生大量的向量数据用于表示特征等 传统的数据库无法很好的支持向量数据的存储和查询 因此需要专门的数据库来支持向量数据的存储和查询 其中查询大部分是相似度查询 即 ANN（Approximate Nearest Neighbor）查询
-- Vector DB 会通过索引来加速查询
 
-##### Algorithms
+##### Index Algorithms
 
-- Random Projection：随机投影
+- Random Projection：随机投影（加快 ANN 查询）
 
   - 对于 m 维的向量 通过随机生成一个 m \* n 的矩阵 将向量投影到 n 维空间中
-  - 可以用于降维 也可以用于升维
+  - 可以用于降维 也可以用于升维 降维后可以方便做索引
 
 - Product Quantization：乘积量化
 
-  - 对于 m 维的向量 将其分为 k 个子向量 对这 k 个子向量做聚类 产生多个 codebook
-  - 当有对同样 m 维向量进行查询时 将其分为 k 个子向量 也进行聚类 得到多个 codebook 依据这些 codebook 找到比较相似的向量（比如两个向量的 codebook 都一样）来进行相似度查询
+  - 对于 m 维的向量 将其分为 k 个子向量 对这 k 个子向量做聚类 产生 k 个 codebook
+  - 当有对同样 m 维向量进行查询时 将其分为 k 个子向量 也进行聚类 得到 k 个 codebook 依据这些 codebook 找到比较相似的向量（比如两个向量的 codebook 都一样）来进行相似度查询
 
 - Locality-sensitive Hashing：局部敏感哈希
 
-  - 对于 m 维的向量 通过哈希函数将其映射到一个含有多个位置的 bucket 中
+  - 对于 m 维的向量 通过哈希函数将其映射到几个个含有多个位置的 bucket 中
   - 进行查询时 同样将查询向量映射到 bucket 中 根据 bucket 中的位置来找到相似的向量
 
 - Hierarchical Navigable Small World ：层次导航小世界
@@ -1329,7 +1356,7 @@ excerpt: " "
 
 - Filtering
 
-  - 向量会带有元数据（比如图片、音频等） 这些元数据可以用于过滤
+  - 向量会带有元数据（比如图片、音频等） 这些元数据可以用于过滤 且也有索引
   - 可以先查询出 top-k 的向量 再用元数据进行过滤 也可以先用元数据进行过滤再查询出剩余向量中的 top-k
 
 ##### Pinecone
@@ -1346,103 +1373,184 @@ excerpt: " "
   - 格式简单
   - 可以存差值
   - 数据有时间戳
+  - 一般是监测、采样数据
 
 #### InfluxDB
 
-- Telegraf：InfluxDB 的数据采集工具 可以监控系统的各种状态
-- Flux：InfluxDB 的查询语言
-- Bucket：InfluxDB 的存储单元 可以设置数据的保留策略
-- 数据字段包含
-  - TIMESTAMP：时间戳
-  - MEASUREMENT：表名
-  - FIELDS：字段 不参与索引
-  - TAGS：记录的标签 参与索引
-- Series：一组相同 measurement 和 tag set 和 field key 的数据
-- Organization：组织 组织内的用户在一个工作空间中共享数据
+- Telegraf：InfluxDB 的数据采集工具 可以监控系统的各种状态 配合 InfluxDB 使用
+- Key Concepts
+  - Flux：InfluxDB 的查询语言
+  - Timestamp：时间戳 存储在 `_time` 列 以纳秒为单位
+  - Measurement：相当于表名 存储在 `_measurement` 列
+  - Fields：字段 不参与索引 包含键与值 一旦查询就是全表扫描
+    - Field Key：字段名 存储在 `_field` 列
+    - Field Value：字段值 存储在 `_value` 列
+  - Tags：记录的标签 参与索引 相当于其他数据库的字段
+  - Series：一组相同 measurement、tag set 和 field key 的数据
+  - Point：一条记录 包含 measurement、tag set、field key、field value、timestamp
+  - Bucket：InfluxDB 的存储单元 类似于数据库 可以设置数据的保留策略
+  - Organization：组织 组织内的用户在一个工作空间中共享数据
 - Design principle
-  - 按照时间升序存储
+  - 按照时间升序存储 以提高性能
   - 数据只追加 不修改不删除
-  - 高并发时 只保证查询到旧数据 不保证查询到最新数据
+  - 高并发时 只保证查询到旧数据 不保证查询到最新数据 这是为了尽快返回结果
   - 没有 ID 因为不需要查询单个数据
-  - 不会记录重复数据 因为只需要记录数据变化的时间点即可
+  - 不会记录重复数据 只有数据变化时才会记录新数据 为了节省空间
 - Storage engine
-  - TSM：Time Structured Merge Tree
-  - TSI：Time Series Index
-  - WAL：Write Ahead Log
-  - Cache
-- 通过 POST 即可写入数据
-- 一旦数据落入 TSM 会被压缩 并且以列存储的方式存储
+  - Components
+    - TSM：Time Structured Merge Tree
+    - TSI：Time Series Index
+    - WAL：Write Ahead Log
+    - Cache
+  - InfluxDB 使用 line protocol 相当于发送 POST 请求来写入数据
+  - 一批数据发送到 InfluxDB 后会先压缩 然后写入 WAL 并且立马写入 Cache 后台定期将 cache 中的数据写入 TSM 注意 Cache 里的数据是热数据 所以不压缩
+  - TSM 树类似于 LSM 树 其 SST 中的数据按照 series key 排序 并且实际存储是列存储（适合时序数据分析） 存储差值以节省空间
 - File Structure
-
-  - Engine path
-    - data
-    - wal
-  - Bolt path
-  - Config path
-
+  - Engine path：存储引擎的路径
+    - data：存储 TSM 文件
+    - wal：存储 WAL 文件
+  - Bolt path：存储 BoltDB 文件 包含非时序数据 比如用户、控制面板等
+  - Configs path：存储 CLI 的配置文件
 - Shards
-  - 设置 duration 每个 duration 会生成一个 shard
+  - Shard 内的数据会被编码并压缩存储 即冷数据
+  - Shard Group：包含一段时间范围内的数据 普通版一个 group 只有一个 shard 企业版可以有多个 shard
+  - 需要指定两个参数来创建 shard group
+    - retention period：数据保留时间 超过这个时间的数据会被删除 可以设为永久
+    - shard group duration：shard group 的时间范围 即多少时间划分一个 shard group
 
-## 12.2（开头讲了点考试内容 本节课基本上都是给华为打广告 没想到也要考 复习时得重新看一下）
+## 12.2
 
 ### GaussDB
 
 - 由华为开发的云原生数据库 基于 PostgreSQL
 - 支持分布式事务、分布式语句优化、分布式存储、分布式计算
 
-- 技术架构概览
+#### 总体架构
 
-  1. 分布式优化、执行与事务
-  2. 多层级高可用容灾
-  3. 云原生弹性伸缩架构
-  4. 智能优化
-  5. 安全隐私
+1. 分布式优化、执行与事务处理
+   - 分布式近数据计算：即尽量把计算下推到数据所在的节点
+   - 全链路并行编译执行：将语句预先编译好 后续填入参数即可 与解释执行相比性能更高
+   - 大规模并发事务处理
+   - SQL 解析优化器：包括 ROB、COB
+2. 多层级高可用容灾
+   - 故障自感知
+   - 多地多活容灾
+3. 云原生弹性伸缩架构
+   - 在线弹性伸缩：纵向扩展和横向扩展 前者是增加一个节点内的资源 后者是增加节点形成更大的集群
+   - 云原生分布式计算存储分离：内存与磁盘分离使用
+   - 负载均衡
+   - 多租户
+4. 智能优化
+   - ABO 优化器：基于 AI 的优化器
+   - 内置 AI 引擎：支持机器学习和深度学习
+5. 安全隐私
+   - 防篡改：区块链技术
+
+#### GaussDB 分布式
 
 - 分布式架构
-  - Coordinator Node：分布式优化器
-  - GTM：分布式事务 使用 2PC 与 CSN（Commit Sequence Number）来保证事务的一致性
+  - Coordinator Node：协调节点
+  - Data Node：存储数据
+  - GTM：分布式事务管理 使用 2PC 与 CSN（Commit Sequence Number）来保证事务的一致性
+- 分布式优化器
+  - 根据语句生成查询计划
+  - 根据查询计划树进行重写 生成优化后的执行计划
 - 分布式并行执行
-  - 多机多线程并行执行
-  - 向量执行 利用多核算力
-  - 编译执行
+  - 多机多线程并行执行：节点内部可以多线程并发执行
+  - 向量执行：读取列存数据 利用 CPU 的多核提高速度
+  - 编译执行：大幅降低执行算子指令数量 提高执行效率
+- 分布式事务
+  - 使用 CSN 管理全局事务号
+  - 采用 2PC 协议 第二阶段事务提交为异步 即所有节点准备好即可提交
+- 分布式高精度时钟
+  - 使用北斗卫星来同步时钟
+- 分布式查询优化
+  - 将计算下推到节点 减少数据传输
+
+#### GaussDB 高可用
+
 - 两地三中心容灾
   - 两地：异地容灾 二一分布
-  - 三中心：三个数据中心
-- 多租户：一个数据库支持多个独立隔离的租户
+  - 三中心：A B C 三个数据中心 A B 为生产集群 位于同一地区 C 为容灾集群 位于另一地区
+- 同城双集群 RPO=0：即零数据丢失
+  - 采用热备份 即请求同时发送到两个集群 切换时间几乎为零
+  - 而暖备份是指请求处理的结果同步给备份集群 如果主集群挂了 用户需要重发请求
+  - 冷备份是指周期性进行数据同步 如果主集群挂了 会丢失上次同步后的数据
+
+#### GaussDB 云原生
+
+- 分布式计算存储分离：计算存储解耦 独立扩展伸缩 允许远程 DMA（Direct Memory Access）访问
+- 存储节点日志按需回放：方便节点崩溃后新节点的数据恢复
+- 数据预分片：数据还未存在时就预先分片 缩短扩容时间 实现平滑扩容
+- 哈希桶聚簇存储：采用一致性哈希 只需迁移少量数据即可实现扩容
+- 映射表并行迁移：只需要迁移少量元数据映射表 无需迁移用户数据
+- 多租户：一个数据库实例支持多个独立隔离的租户
+  - 数据库进行资源、数据的隔离以及弹性伸缩
+  - 租户进行资源弹性调度与资源管控
+  - 四种方案
+    1. 分开部署在两个实例 维护一致性很差
+    2. 部署在一个数据库的两张表
+    3. 存在一张表 用一个字段记录租户的权限 不同的字段分到另外表 用外键关联
+    4. 同 3 用行存不同字段 可能会很长
+
+#### GaussDB 查询处理
+
 - 查询处理
   - ROB：基于规则的优化器
     - 根据预定义的启发式规则来优化查询
-  - COB：基于成本的优化器 利用统计信息
-    - 通过代价估算来选择最优的执行计划
+  - COB：基于成本的优化器
+    - 利用统计信息 通过代价估算来选择最优的执行计划
     - 代价=IO+CPU+通信
   - AOB：基于 AI 的优化器
-    - 借助 LLM 估计基数和代价
+    - 借助强化学习等估计基数和代价
 - 查询重写
   - 谓词下推：在子表上执行谓词 然后 join
   - 谓词上移：先 join 子表 再执行谓词
+
+#### GaussDB 存储
+
 - 存储概览
   - 追加更新行存
   - 原位更新行存
   - 列存
   - 内存
+  - 支持智能化互转
+- 页面结构
+  - 行存储以页面为单位 页头存放元数据 页头后防止指向元组的行指针 而元组则反向从页尾向页头增长
+- 追加更新
+  - 采用 MVCC 多版本机制 采用全局递增的事务号作为版本号 一个元组会记录 xmin 和 xmax 即何时插入与删除 用于判断可见性
+  - 将原记录的 xmax 改为当前事务号 使得原有行失效
+  - 将 id 改为新行的 id 指向新行 其 xmax 为 0
+  - 保留原有行的数据 用于回滚
+  - 数据位于不同位置 可以并发读写
+- 原位更新
+  - 追加更新将老数据与新数据都存在数据空间 回滚需要扫描所有数据
+  - 原位更新使用单独的页面存储老版本数据
+  - 最新版本存在数据段原地 通过指针指向老版本数据
 - 空闲空间管理
-  - 使用大根堆 找到最适配 size 的页面
-- 分布式高精度时钟
-  - 使用北斗卫星来同步时钟
-- 云原生
-  - 计算存储分离：也就是内存归内存 磁盘归磁盘
-  - 数据预分片：缩短扩容时间
-  - 哈希桶聚簇存储：一致性哈希 扩容时迁移少量数据即可
-- 同城双集群 RPO=0
-  - 热备份
+  - 使用三层大根堆维护每个页面的空闲空间 快速找到最适配 size 的页面并更新空闲空间大小
+- 缓冲区
+  - 使用环形缓冲区存放事务的读写请求
+- 列存
+  - 基本单位是压缩单元（CU）
+  - 压缩方式包括差分编码、字典编码等 自适应选择
+  - 每个 CU 可以记录元数据 包括时间戳、最大值、最小值等 方便对于 CU 建立索引
+- 内存
+  - 低延迟高吞吐 并行化
+  - 采用外部数据封装器 FDW 将外部的内存存储转换为内部的存储 比如 Redis
+- HTAP
+  - 支持行列混合存储 自由切换
+
+#### GaussDB 安全
+
 - 安全全景
   - 攻不破：AI 防 SQL 注入
   - 进不来：防强制攻破（比如暴力破解）
-  - 拿不走：权限控制
-  - 看不懂：数据脱敏
-  - 改不了：区块链防篡改
-  - 赖不掉：审计
-  - 信得过：
+  - 拿不走：行级权限控制
+  - 看不懂：数据脱敏加密
+  - 改不了：区块链防篡改 可看不可改
+  - 赖不掉：审计 一旦有修改会记录操作者
+  - 信得过：通过第三方评测认证
 
 ## 12.4
 
@@ -1450,37 +1558,69 @@ excerpt: " "
 
 - Data Lake 是一个存储池 以 raw format 存储各种文件和大对象数据 包含数据的 metadata
 - 和 Data Warehouse 不同 数据湖写入数据时不作处理 等待后续需要时再作分析处理 因为并不确定数据的用途
-- 演化历程
-  - HDFS 为核心存储 MapReduce 为基本计算模型
-  - HDFS 无法满足实时性高的场景 无法进行流处理 因此产生了 lambda 的"流批一体化"架构
-  - 加大流计算的并发性与“时间窗口”概念 流批统一
-  - Lakehouse：湖仓一体化 为 data science 提供 SQL 接口 为机器学习提供 DataFrame 接口
+- Data Lake vs Data Warehouse
+  - 数据格式：前者以 raw format 存储 后者以 processed format 存储
+  - 数据目的：前者未定 后者一定会用到
+  - 用户：前者是数据科学家 后者是商业用户
+  - 可访问性：前者可以快速读写 后者需要更多开销来处理数据
+
+#### 演化历程
+
+- HDFS 为底层存储系统 MapReduce 为基本计算模型 Zookeeper 为协调服务
+- HDFS 的批处理无法满足实时性高的场景（比如流处理场景）因此产生了 lambda 的"流批一体化"架构 数据既可以进行批处理也可以进行流处理
+- 加大流计算的并发性与“时间窗口”概念 流批统一 即后面会提到的 将一段时间内的所有数据作为一个 batch 进行处理 从而流批处理可以统一
+- Lakehouse：即湖仓一体化 在数据湖内嵌 ETL 功能 需要进行处理的结构化数据可以直接存储在数据湖中 其他数据也可以直接不做处理取出用于其他用途 数据湖上层是元数据层 根据元数据选择更上层的数据查询方式（SQL API、DataFrames API）
 
 #### Delta Lake
 
-- Delta Lake 是一个开源的数据湖解决方案 存储大量结构化和非结构化的原始数据 分析时会将数据统一转换为 parquet 格式
-- 数据写入后先是 Ingestion Tables 不作任何处理 然后是 Refined Tables 作清洗处理 最后是 Feature/Agg Data 提供机器学习使用
-- Apache Hudi
-- Apache Iceberg
+- Delta Lake 是一个开源的数据湖解决方案
+  - 可以接受任何格式和来源的数据 并以高保真的方式存储
+  - 支持实时或批处理数据
+  - 可以使用包括 SQL、Python、R 在内的多种语言进行数据分析（这是因为其可以将数据转换为统一的格式 如 Parquet）
+- Architecture
+  - 数据可以以 batch 或 stream 的方式写入 Delta Lake
+  - 输入的数据先以原始格式存储在 Ingestion Table 中
+  - 底层存储可以是 HDFS、S3、ADLS 等
+  - 数据进一步进行处理（比如去重、清洗）后存储在 Refined Table 中
+  - 进一步进行 Feature、Aggregation 等操作后 数据最终可以直接用于数据分析或机器学习
+
+#### Apache Hudi
+
+- Architecture
+  - 底层存储支持 HDFS、S3、ADLS 等
+  - 输入数据支持 MySQL、Cassandra、PostgreSQL 等
+  - 通过 Flink 接受数据到 Raw Table 中
+  - 进一步进行增量 ETL 后存储在 Derived Table 中
+  - 通过 Spark、Hive 等进行数据查询
+  - 支持使用 Spark、Hive、Flink 进行流水线处理
 
 #### 云边融合数据存储
 
 - 哈哈 这不就是我正在做的灯塔项目吗
-- 讲了一下云边存储的就近存储和查询下推的减少带宽消耗
+- 利用边缘计算资源来减轻云端的压力 减少带宽消耗
 
 ## 12.9
 
 ### Clustering
 
-- 一般是为了 RAS: Reliability, Availability, Scalability
-- 主要的实现方式是通过负载均衡 可以轮询、最少操作数或是 IP 哈希（适用于 session 保持）
-- 崩溃后的 session 保持有两种方式
-  1. 要么 session 共享 比如我暑假用的 redis 存 session
-  2. 要么集中在一个机器做 session 处理鉴权
+- 集群的目的可以被概括为 RAS
+  - Reliability：消除了单点故障
+  - Availability：可用性提升为 1-(1-p)^n
+  - Serviceability：可以进行热维护与热更新
+  - Scalability：期望以线性提升性能
+- 集群是一组服务器提供联合服务 在客户端的视角 集群就是单个服务器
+- 负载均衡
+  - 集群的负载均衡就是反向代理 即将请求分发到集群中的某个节点
+  - 策略有轮询、最少操作数、IP 哈希（可以解决 session 粘滞问题）等
+  - failover 后的 session 保持有两种方式
+    1. 要么 session 共享或广播 但是会浪费资源
+    2. 要么集中在一个机器做 session 处理鉴权 但是会造成单点故障与性能瓶颈
+  - 请求 fail 的处理关键点在于幂等性
 
 #### Nginx
 
-- 大部分用法可以见[`从零开始部署自己的服务器`](https://blog.nwdnysl.site/2024/09/13/%E4%BB%8E%E9%9B%B6%E5%BC%80%E5%A7%8B%E9%83%A8%E7%BD%B2%E8%87%AA%E5%B7%B1%E7%9A%84%E6%9C%8D%E5%8A%A1%E5%99%A8/#React-Vite-%E9%A1%B9%E7%9B%AE%E7%9A%84%E9%83%A8%E7%BD%B2-%E5%8F%82%E8%80%83)与[`WEB技术栈`](https://blog.nwdnysl.site/2024/09/07/WEB%E6%8A%80%E6%9C%AF%E6%A0%88/#Nginx)两篇文章 我在这里只做一些简单的补充
+- Nginx 是一个高性能的 HTTP 和反向代理服务器
+- 配置文件的写法可以见[`从零开始部署自己的服务器`](https://blog.nwdnysl.site/2024/09/13/%E4%BB%8E%E9%9B%B6%E9%83%A8%E7%BD%B2%E6%9C%8D%E5%8A%A1%E5%99%A8/#React-Vite-%E9%A1%B9%E7%9B%AE%E7%9A%84%E9%83%A8%E7%BD%B2-%E5%8F%82%E8%80%83)与[`WEB技术栈`](https://blog.nwdnysl.site/2024/09/07/WEB%E6%8A%80%E6%9C%AF%E6%A0%88/#Nginx)两篇文章 我在这里只做一些简单的补充
 
 - 负载均衡策略有以下几种
   - 轮询（默认）
@@ -1490,15 +1630,20 @@ excerpt: " "
 
 #### 作业：部署 Nginx 作为负载均衡
 
-- 为方便使用容器部署 nginx 映射到端口 80 并将 conf 文件挂载到容器中 详细可见[隔壁笔记](https://blog.nwdnysl.site/2024/09/13/%E4%BB%8E%E9%9B%B6%E5%BC%80%E5%A7%8B%E9%83%A8%E7%BD%B2%E8%87%AA%E5%B7%B1%E7%9A%84%E6%9C%8D%E5%8A%A1%E5%99%A8/#%E4%BD%BF%E7%94%A8-Docker-%E9%83%A8%E7%BD%B2-Nginx)
+- 为方便使用容器部署 nginx 映射到端口 80 并将 conf 文件挂载到容器中 详细可见[隔壁笔记](https://blog.nwdnysl.site/2024/09/13/%E4%BB%8E%E9%9B%B6%E9%83%A8%E7%BD%B2%E6%9C%8D%E5%8A%A1%E5%99%A8/#%E4%BD%BF%E7%94%A8-Docker-%E9%83%A8%E7%BD%B2-Nginx)
 
 #### MySQL Cluster
 
-- 使用 mysqladmin 可以建立主从复制的 MySQL 集群
-- 切换为 mysql-js 创建集群
-- 在主数据库上检查是否可以配置主从复制 mysql 会告诉你哪些配置不对 可以输入`y`来一键配置 然后重启
-- 继续检查从数据库 一样的操作 然后把从数据库添加到集群中 有复制和增量备份两种方式
-- 最后检查一下集群的状态即可
+- 使用 MySQL Shell 可以建立主从复制的 MySQL 集群 至少需要 1 个主节点和 2 个从节点
+- 切换为 mysql-js 模式以输入 JavaScript 语句
+- 使用`dba.checkInstanceConfiguration()`来检查配置是否正确
+- 如果配置不对 使用`dba.configureInstance()`来检查哪些配置不对 可以输入`y`来一键配置 配置完需要重启
+- 使用`dba.createCluster()`来创建集群
+- 使用`cluster.addInstance()`来添加从节点 注意从节点也需要进行`dba.checkInstanceConfiguration()`检查
+- 添加从节点时可以选择是复制还是增量备份
+- 使用`cluster.status()`来查看集群状态
+- 使用`cluster.removeInstance()`来移除节点
+- 使用`cluster.dissolve()`来解散集群
 
 ### AI-1：全连接神经网络 & Keras
 
@@ -1560,8 +1705,8 @@ excerpt: " "
 
 ### Cloud Computing
 
-- Grid Computing：将每个人的计算机都作为计算资源提供给其他人
-- Cloud Computing：将特定的计算机 比如服务器 作为计算资源提供给其他人
+- Grid Computing：云计算的前身 希望计算资源像电力一样即插即用 通过将自己的计算机资源放到网络上共享来实现（p2p？）
+- Cloud Computing：将特定的计算资源 比如服务器 暴露并提供给其他人
   - SaaS：Software as a Service 提供软件服务 比如 Office 365
   - PaaS：Platform as a Service 提供平台服务 比如数据库、中间件等
   - IaaS：Infrastructure as a Service 提供基础设施服务 比如虚拟机、存储等
@@ -1570,29 +1715,147 @@ excerpt: " "
   - 灵活定价
   - 弹性扩展
   - 快速提供
-  - 预先虚拟化
-- GFS（这部分可以见 CSE 笔记）
-  - GFS 是 Google 的分布式文件系统
-  - 分布式导致可用性下降 因此要 replicate
-  - replication 会导致一致性问题 因此要有主从复制 控制流与数据流分离
-  - Bigtable：将多个有外键的表合并为一张大表进行水平分表 通过 Column Family 来进行列的分组 保留原来的分表信息
-- Cloud Native：云原生 即开发、编译、部署都在云上进行 要求 serverless、容器化、CI/CD 等
-- Edge Computing：将计算资源放在离用户最近的地方 比如 CDN、边缘服务器等
-- Computation Offloading：当节点的计算资源不足时 将计算任务分发到其他节点上 或者将计算任务分发到云上
+  - 预先虚拟化（提前划分好资源）
+- Core teqs of Cloud Computing（以 Google 为例）
+  - MapReduce：分布式计算框架 负责云上的作业调度
+  - GFS
+    - Google 的分布式文件系统
+    - 通过 master 和 chunk server 来管理文件
+    - 使用 replica 保证数据的可用性 同时也带来了一致性问题
+    - 使用控制流和数据流分离的方式解决一致性问题
+  - Bigtable
+    - Google 的分布式数据库 适用于非常大的结构化数据存储
+    - 使用列族来存储数据 增强单表的表现能力 去掉表之间的关联 形成一个大表
+    - 使用元数据表存储数据的位置
+    - 和 LSMT 一样 数据先写入 memtable 然后写入 SSTable
+  - Memory
+    - 一般会进行计算存储分离
+  - Hadoop
+    - Apache 的开源分布式计算框架
+    - 使用 HDFS 作为底层存储
+    - 使用 MapReduce 作为计算框架
+- Cloud Native（云原生）：即开发、编译、部署都在云上进行 特点包括 serverless、容器化、CI/CD 等
 
-#### Graph QL
+### Edge Computing
 
-- RESTful 的风格无法描述用户的需求 比如只取出数据的某些字段
+- 将计算资源放在靠近数据源的网络边缘 比如 CDN、边缘服务器等
+- 好处包括 移动设备可以不用持续连接云端 以及减少了数据传输的延迟与带宽消耗
+- Application
+  - Cloud Offloading：当节点的计算资源不足时 将计算任务分发到其他节点或者云上
+  - Video Analytics：视频无需发送到云 直接在摄像头上进行分析 在资源不足时再发送到云
+  - Smart Home：智能家居可以直接在家中的设备上进行计算
+- 目前最多的是云边融合的模式
+
+### Graph QL
+
+- RESTful 的风格是完全数据驱动的 无法细化描述用户的需求 比如只取出数据的某些字段
 - GraphQL 是一种 API 查询语言 用于描述客户端如何请求数据
 - Queries & Mutations
-  - `query { hero { name } }`：查询 hero 的 name
-  - `query { hero { name friends { name } } }`：查询 hero 的 name 和 friends 的 name
-  - `query { hero(id: "1000") { name } }`：查询 id 为 1000 的 hero 的 name
-  - `query { empireHero: hero(episode: EMPIRE) { name } }`：查询 episode 为 EMPIRE 的 hero 的 name 返回时字段就为 empireHero
-  - `fragment HeroFragment on Character { name }`：定义一个 fragment 可以被复用的字段条件
-  - variables：`query HeroNameAndFriends($episode: Episode) { hero(episode: $episode) { name friends { name } } }`：定义一个变量 在查询时传入
-  - `mutation { createReview(episode: JEDI, review: { stars: 5, commentary: "This is a great movie!" }) { stars commentary } }`：创建一条评论
-- GraphQL 相当于把 schema 发送给后端 后端根据 schema 封装好数据返回给前端
+  - Fields：需要返回的字段 比如：
+    ```graphql
+    {
+      hero {
+        name
+        friends {
+          name
+        }
+      }
+    }
+    ```
+  - Arguments：参数 比如查询 id 为 1000 的人的 name 与 height：
+    ```graphql
+    {
+      human(id: "1000") {
+        name
+        height(unit: FOOT)
+      }
+    }
+    ```
+  - Aliases：别名 当查询多个相同字段时可以使用 比如：
+    ```graphql
+    {
+      empireHero: hero(episode: EMPIRE) {
+        name
+      }
+      jediHero: hero(episode: JEDI) {
+        name
+      }
+    }
+    ```
+    返回数据会是：
+    ```json
+    {
+      "empireHero": {
+        "name": "Luke Skywalker"
+      },
+      "jediHero": {
+        "name": "R2-D2"
+      }
+    }
+    ```
+  - Fragments：片段 可以定义一些字段的集合 用于复用 比如：
+    ```graphql
+    fragment HeroFragment on Character {
+      name
+    }
+    ```
+    然后可以这样使用：
+    ```graphql
+    {
+      hero {
+        ...HeroFragment
+        friends {
+          ...HeroFragment
+        }
+      }
+    }
+    ```
+  - Variables：变量 可以在查询时传入 比如：
+    ```graphql
+    query HeroNameAndFriends($episode: Episode) {
+      hero(episode: $episode) {
+        name
+        friends {
+          name
+        }
+      }
+    }
+    ```
+    同时在查询时传入变量（即 variables={}）：
+    ```graphql
+    {
+      "episode": "JEDI"
+    }
+    ```
+  - Mutations：用于修改数据 比如：
+    ```graphql
+    mutation {
+      createReview(
+        episode: JEDI
+        review: { stars: 5, commentary: "This is a great movie!" }
+      ) {
+        stars
+        commentary
+      }
+    }
+    ```
+  - Inline Fragments：内联片段 可以在查询时定义片段 比如 hero 可能是人也可能是机器人：
+    ```graphql
+    {
+      hero {
+        name
+        ... on Droid {
+          primaryFunction
+        }
+        ... on Human {
+          height
+        }
+      }
+    }
+    ```
+- 使用
+  - 在后端预先写好 schema 文件 定义好接口与数据结构
+  - 当前端发送请求时 后端根据 schema 文件来解析与封装数据
 
 #### 作业：实现一个 GraphQL 接口
 
@@ -1663,3 +1926,418 @@ excerpt: " "
 - 将参数个数提高即可 加大 batch_size 可以提高收敛速度 基本上最后收敛在 0.97 左右
 - 比较重要的是如何使用 GPU 进行训练 因为 CPU 实在是太慢了
 - 参考链接：https://www.baidu.com/link?url=H3KSUXUjZ47N8E3A9JbgU_h0cexmuXSeWBVPDSXDHnAl_g5J2N0YLwwE_hCxyEaGh_LR1-P5btUiGp90MgiT_NAbksplygXvFMsF9auwMgi&wd=&eqid=84f566d90000822b00000003675c566a 大概就是要降级到 2.6 另外 cuda 可以用 conda 安装 不用装在本机上污染环境了
+
+## 12.16
+
+### Container
+
+- 容器是一种轻量级的虚拟化技术 用于隔离应用程序和环境 使用了 linux 的 cgroups 和 namespaces 技术
+- Docker 是一个开源的容器引擎 使用了 Go 语言编写
+- 使用：见[隔壁笔记](https://blog.nwdnysl.site/2024/09/07/WEB%E6%8A%80%E6%9C%AF%E6%A0%88/#Docker)
+- Named volumes vs Bind mounts
+  - 前者使用`docker volume create`命令创建卷 并使用`--mount source=xxx,target=xxx`来将创建好的卷挂载到容器中 Docker 会自动管理卷的存储位置 通常用于无需访问数据的持久化 比如数据库
+  - 后者可以使用`-v`参数来将本地文件夹挂载到容器中 通常用于需要访问数据的持久化 比如代码的热更新
+- 容器内部的分层主要是为了可以复用镜像 节省存储空间
+
+### AI-3：自然语言处理
+
+- NLP 是一种人工智能技术 用于处理和分析人类语言 包括：信息获取、文本分类、文档相似度推荐、机器翻译、聊天机器人、文本生成等方面
+- 将词语变为向量的方法
+  - One-hot Encoding：将每个词语映射为一个向量 但是这样会导致维度爆炸
+  - 可以进行降维 比如每个维度是一种属性 身高、体重等
+- 基本步骤
+  - 先构建语料库 比如历年的新闻 进行数据预处理 导出为方便处理的格式 比如 csv
+  - 使用默认的字典对语料库进行分词 得到自己的字典
+  - 对字典进行过滤 比如删去所有只出现一次的词语 以及常用词语
+  - 使用 BOW（Bag of Words）模型将语料库的每句话转换为向量
+  - 使用 TF-IDF（Term Frequency-Inverse Document Frequency）模型对语料库构建权重
+  - 使用 N-Gram 模型发现语料库中的短语（即多个词语的组合）
+  - 使用 Genism 的 LDA 模型进行语料库的分类
+  - 使用 LSI（Latent Semantic Indexing）模型进行语料库的分类 然后可以用余弦来计算相似度
+- 使用 MLP 进行文本分类
+  - MLP 是多层感知机 也就是全连接神经网络
+  - 准确率不高
+- 使用 CNN 进行文本分类
+  - 有一组已经分类的文本数据集 进行数据预处理 把词语转换为 n 维向量
+  - 使用 CNN 进行一维卷积 每一个卷积层相当于提取了 n 个单词之间的关系 池化层进一步收缩了单词 下一个卷积层相当于提取了 n\*n 个单词之间的关系
+- 使用 TextCNN 进行文本分类
+
+  - CNN 如果数据中句子长度不一 会导致对于过短的句子强行填充 会导致效果不好
+  - 相比于 CNN TextCNN 只是多了一层 concat 层 把每一个池化层的结果拼接在一起在进行全连接 相当于提取了不同规模的短句的关系特征 适合句子长度不一的文本分类
+  - 示例代码：（多了一层 concat 层）
+
+    ```python
+    # 合并3个Max Pooling 层
+      cnn = Concatenate(axis=1)([mp1, mp2, mp3])
+    ```
+
+## 12.18
+
+### Hadoop
+
+- Hadoop 是一个开源的分布式计算框架 用于大规模数据处理
+- Modules
+  - Common：公共模块 提供了一些 Util 类
+  - HDFS（Hadoop Distributed File System）：Hadoop 的分布式文件系统
+  - YARN：负责任务调度与集群的资源管理
+  - MapReduce：基于 YARN 的分布式计算框架 负责并行处理大规模数据
+  - Ozone：分布式对象存储 用于存储大规模键值对
+- 启动比较繁琐 自己看 ppt 吧
+
+#### MapReduce
+
+- Overview
+
+  - Input：输入的数据集 划分为多个 split （其实就是 HDFS 的 block 默认大小是 64MB） 每个 split 由一个 mapper 处理
+  - Map：负责处理每个 split 产生形如(map,2),(map,3)的键值对 写入 Intermediate File
+  - Combine：（可选）在 worker 本地对 Map 的输出进行合并 比如(map,2),(map,3)合并为(map,5) 从而减少传输的数据量 注意不是所有任务都适合 Combine 比如求平均值就不能
+  - Shuffle：将 Map 的输出按照 key 进行排序 然后进行分区 比如 A-M 为一个分区 N-Z 为一个分区 将分区的数据传输给 Reducer
+  - Reduce：处理某个分区所有键值对 产生最终结果 写入 Output File
+    - reducer 的数量为 0.95 or 1.75 \* worker nodes \* containers per node 当节点的 CPU 性能比较好时可以设置为 1.75 否则设置为 0.95
+
+- Example：WordCount with Java
+
+  - 代码示例：
+    ```java
+    public class WordCount {
+        public static class TokenizerMapper extends Mapper<Object, Text, Text, IntWritable> {
+            private final static IntWritable one = new IntWritable(1);
+            private Text word = new Text();
+            public void map(Object key, Text value, Context context) throws IOException, InterruptedException {
+                StringTokenizer itr = new StringTokenizer(value.toString());
+                while (itr.hasMoreTokens()) {
+                    word.set(itr.nextToken());
+                    context.write(word, one);
+                }
+            }
+        }
+        public static class IntSumReducer extends Reducer<Text, IntWritable, Text, IntWritable> {
+            private IntWritable result = new IntWritable();
+            public void reduce(Text key, Iterable<IntWritable> values, Context context) throws IOException, InterruptedException {
+                int sum = 0;
+                for (IntWritable val : values) {
+                    sum += val.get();
+                }
+                result.set(sum);
+                context.write(key, result);
+            }
+        }
+        public static void main(String[] args) throws Exception {
+            Configuration conf = new Configuration();
+            Job job = Job.getInstance(conf, "word count");
+            job.setJarByClass(WordCount.class);
+            job.setMapperClass(TokenizerMapper.class);
+            job.setCombinerClass(IntSumReducer.class); //combiner与reducer使用相同逻辑
+            job.setReducerClass(IntSumReducer.class);
+            job.setOutputKeyClass(Text.class);
+            job.setOutputValueClass(IntWritable.class);
+            FileInputFormat.addInputPath(job, new Path(args[0]));
+            FileOutputFormat.setOutputPath(job, new Path(args[1]));
+            System.exit(job.waitForCompletion(true) ? 0 : 1);
+        }
+    }
+    ```
+
+- JobTracker：在 MapReduce 中负责任务调度 资源管理（通过监听 TaskTracker 的心跳来管理）由于负载过重 会导致单点故障 因此在 2.0 中进行了分离
+- Problems
+
+  - mapper 在处理 split 时 会因为缓冲区不够大而进一步切分 split 然后处理一部分就写入一部分结果到磁盘 最后再合并结果 reducer 也是一样的问题 这就导致 IO 次数太多 速度受到限制 解决方法是在内存里处理数据 即 Spark
+  - 同时 split 划分后产生的 spill 文件 一旦发送崩溃 已经处理的 spill 就没有用了 解决方法是直接以 spill 为单位进行 shuffle 并发送给 reducer 处理
+
+#### YARN
+
+- 也就是 MRv2 MapReduce 的 2.0 版本 解决了 JobTracker 的单点故障问题
+- 核心思想是将 JobTracker 的任务调度和资源管理分离出来 交给了一个全局的 ResourceManager 与每一个 application 的 ApplicationMaster 其中每一个 application 可以是单个 job 或是多个 job 的 DAG
+
+### AI-4：RNN（循环神经网络）
+
+- RNN 是一种递归神经网络 每一次的输出由上一次的输出和当前的输入共同决定 即 yi=f(yi-1, xi) 也就带上了之前所有数据的特征 适合预测时间序列数据与自然语言处理
+- RNN 的缺点是无法并行 因为每一次的输出都依赖于上一次的输出 另外 RNN 固定了依赖的长度 模型不够灵活 导致长期记忆的学习比较弱 这点可以通过 LSTM 来解决
+- LSTM（Long Short-Term Memory）：长短期记忆网络 是 RNN 的一种变体 通过门控机制来控制信息的流动 具体而言 LSTM 有三个门：遗忘门、输入门、输出门 遗忘门决定了之前的状态有多少会被遗忘 输入门决定了新的状态有多少会被加入 输出门决定了这个状态有多少会被输出 虽然 LSTM 仍不能并行 但是单个 LSTM 单元内部的计算的并行度较好 比较适合长期记忆的学习
+- 代码示例：
+
+  ```python
+  # 预处理数据 相当于将第i个数据的输入变为第i-look_back到i-1个数据
+  def create_dataset(data, look_back):
+    X, y = [], []
+    for i in range(len(data) - look_back):
+        X.append(data[i:i + look_back])
+        y.append(data[i + look_back])
+    return np.array(X), np.array(y)
+  X, y = create_dataset(scaled_data, look_back)
+  # 激活函数是tanh 所以需要将数据缩放到-1到1之间
+  scaler = MinMaxScaler(feature_range=(0, 1))
+  scaled_data = scaler.fit_transform(time_series.reshape(-1, 1))
+  # 构建RNN模型 神经元数为50 输入形状为look_back 输出形状为1
+  model = Sequential([
+    SimpleRNN(50, input_shape=(look_back, 1), return_sequences=False, activation='tanh'),
+    Dense(1)  # Output layer for regression
+  ])
+  # LSTM模型基本一样
+  model = Sequential([
+    LSTM(50, input_shape=(look_back, 1), return_sequences=False),
+    Dense(1)
+  ])
+  ```
+
+## 12.23
+
+### Spark
+
+- Spark 是一个分布式计算框架
+
+  - 用于大规模的流/批数据处理 支持多种语言 比如 Java、Scala、Python、SQL、R
+  - 支持执行分布式的 ANSI SQL 查询（即 Spark SQL）
+  - 用于数据科学与机器学习
+  - 与 Hadoop 相比 Spark 是在内存中进行计算的 拥有 100x 的性能（在内存足够的情况下）
+
+- Example：Log Mining（Scala）
+
+  ```scala
+  lines = spark.textFile("hdfs://...") // 读取文件 返回一个 RDD(Resilient Distributed Dataset) 类似于python的DataFrame
+  errors = lines.filter(_.startsWith("ERROR"))
+  messages = errors.map(_.split("\t")(2)) // 从错误信息中提取信息
+  cachedMessages = messages.cache() // 在内存中持久化 messages 此时才开始执行前几步的操作 因为 Spark 是惰性计算 用stage来划分任务
+  cachedMessages.filter(_.contains("mysql")).count() // 统计包含 mysql 的错误信息 count是一个reduce操作 会交给多个节点来执行
+  ```
+
+- Components
+
+  - 一个 Driver Program：用户交互的客户端 处于 SparkContext 的控制下
+  - 一个 Cluster Manager：Mesos、YARN、Kubernetes 默认是 Zookeeper
+  - 多个 Worker Nodes：每个节点都有自己的 executor 用于执行任务
+
+- Quick Start
+
+  - `sbin/start-master.sh`：启动 master
+  - `sbin/start-worker.sh spark://<master-ip>:7077`：启动 worker
+  - 使用`spark-submit --master spark://<master-ip>:7077`来提交任务
+  - Java
+    - 在 Java 中引入依赖 然后创建 session 编写代码逻辑
+    - 打包为 jar 包 然后使用 spark-submit 将 jar 包提交到集群中运行
+  - Scala
+    - 和 Java 类似 只是语法不同 也可以打包为 jar 包 然后使用 spark-submit 提交
+    - 可以通过`./bin/spark-shell`来启动一个交互式的 Scala 环境
+  - Python
+    - 将 py 文件通过 spark-submit 提交到集群中运行
+    - 可以通过`./bin/pyspark`来启动一个交互式的 Python 环境
+
+#### Spark RDD
+
+- RDD 即 Resilient Distributed Dataset 是 Spark 的核心数据结构 代表一个不可变的、可分区的、并行计算的集合
+- RDD 可以通过两种方式创建
+  - 从一个已有的集合中创建 比如`val data = Array(1, 2, 3, 4, 5)`然后`val rdd = sc.parallelize(data)`
+  - 从一个文件中创建 比如`val rdd = sc.textFile("hdfs://...")` 就是创建了一个从文件中读取的 RDD
+- RDD Operations
+  - Transformation（产生新的 RDD）
+    - map：对每个元素应用一个函数
+    - flatMap：对每个元素应用一个函数并返回一个迭代器 如`flatMap(_.split(" "))` 就是把每个元素按空格分割然后摊平
+    - filter：过滤元素
+    - union：合并两个 RDD
+  - Actions（返回一个结果）
+    - reduce：对 RDD 中的元素进行 reduce 操作
+    - count：统计 RDD 中的元素个数
+    - collect：将 RDD 中的元素收集到一个数组中
+- Partition
+  - RDD 需要进行分区 Spark 会为每个分区分配一个任务
+  - 可以使用`partitionBy`方法来指定分区方式 比如`rdd.partitionBy(new HashPartitioner(2))`就是使用哈希分区器将 RDD 分为 2 个分区
+  - 假设有两个 RDD 需要周期性进行 join 操作 其中 A 进行了哈希分区 而 B 没有 从而在 join 操作时 生成的子分区会根据 A 的分区数来决定 如下图所示
+    ![](https://image.blog.nwdnysl.site/20250103192843-c32ff9ff2b070a5fdb7f62539591339a.png)
+    - Narrow Dependency：窄依赖 即 A 与 joined 的依赖关系 父 RDD 的每个分区只会被子 RDD 的一个分区使用 性能高 并且数据丢失时重计算快 map、filter、union 以及带有 co-partition 的 join 都是窄依赖
+    - Wide Dependency：宽依赖 即 B 与 joined 的依赖关系 父 RDD 的每个分区会被子 RDD 的多个分区使用 意味着多个节点之间的数据传输 性能低 groupByKey、不带有 co-partition 的 join 都是宽依赖 会导致 shuffle
+- Stage
+  - 所有的 Transformation 都是 lazy 的 遇到 Action 时必须执行
+  - 除此之外 Transformation 会被划分为 stage 其边界处必须执行
+  - stage 的划分有两个依据
+    1. 遇到宽依赖的 shuffle 操作
+    2. 产生新的已缓存的分区
+  - 好处是减少内存占用 利用了窄依赖的高速计算 将操作尽可能推迟到宽依赖时才执行 使得窄依赖产生的 RDD 可以尽可能晚产生
+- Persistence
+  - MEMORY_ONLY：将 RDD 缓存在内存中
+  - MEMORY_AND_DISK：将 RDD 缓存在内存中 如果内存不够则存储在磁盘上
+  - MEMORY_ONLY_SER：将 RDD 缓存在内存中 但是序列化
+  - MEMORY_AND_DISK_SER：将 RDD 缓存在内存中 如果内存不够则存储在磁盘上 但是序列化
+  - DISK_ONLY：将 RDD 缓存在磁盘上
+  - MEMORY_ONLY_2：将 RDD 缓存在两个节点的内存中
+
+#### Spark SQL
+
+- 即使用 SQL 语句来操作 RDD 比如`val sqlDF = spark.sql("SELECT * FROM table")`
+- Datasets 是分布式数据集 DataFrame 则是以命名列的方式组织的 Dataset 也是不能修改的
+- 可以通过`spark.read.json("hdfs://...")`来读取 JSON 文件 生成一个 DataFrame
+- 然后使用`spark.sql("SELECT * FROM table")`就可以使用 SQL 语句来操作 DataFrame
+
+#### Other Issues
+
+- Spark Streaming
+  - Spark 的流处理模块 可以处理实时数据流
+  - 实际上是多个微观的批处理 比如每隔 1s 处理一次数据 那么 1-2s 之间的所有新增数据就是一个批次
+- MLlib
+  - Spark 的机器学习库 提供了一些常用的机器学习算法 比如分类、回归、聚类、协同过滤等
+- GraphX
+  - Spark 的图计算库 提供了一些常用的图算法 比如 PageRank、连通分量、最短路径等
+
+### Storm
+
+- Storm 是一个实时计算框架 用于处理实时数据流
+- Architecture
+  - Nimbus：负责任务调度
+  - Supervisor：负责任务执行 监听每个 Worker
+  - Zookeeper：负责集群管理
+- Topologies
+  - 由 Spout 和 Bolt 组成的 DAG 图
+  - Spout：数据源
+  - Bolt：数据处理
+- Example：WordCount
+  ```java
+  TopologyBuilder builder = new TopologyBuilder();
+  builder.setSpout("spout", new RandomSentenceSpout(), 5); // 参数为 5
+  builder.setBolt("split", new SplitSentence(), 8).shuffleGrouping("spout");
+  builder.setBolt("count", new WordCount(), 12).fieldsGrouping("split", new Fields("word"));
+  ```
+- Start：和 Spark 类似 也是先启动一个集群 然后提交 jar 包
+
+### Zookeeper
+
+- Zookeeper 是一个高性能的分布式应用协调服务 用于管理分布式系统的配置、命名、同步等
+
+### AI-5：Chat-GPT
+
+- GPT 是一个基于 Transformer 的模型 用于生成文本
+- 原理其实很简单 就是预测下一个单词的概率
+- 为了随机性 会在预测时加入一个温度参数
+- 概率由语料库决定 首先确定每个字符出现的概率 然后确定一个字符出现后下一个字符的概率 以此类推产生了 n-gram 概率模型 就可以随机生成正确的单词
+- 生成句子的过程是类似的 但是单词的数量太多了 必须降维 即把单词转换为向量
+- 最后经过 transformer 模型的训练 就可以生成文本了
+
+## 12.25
+
+### HDFS
+
+- HDFS 是 Google 使用 Java 编写的分布式文件系统的开源实现 适合大数据存储 并且适配低性能的硬件 不适合需要低延迟且多修改或文件较小的场景（修改的代价太大）
+
+- Architecture
+  - HDFS 是一个 master-slave 架构 包括一个 NameNode 和多个 DataNode 文件会被分为多个块存储在不同的 DataNode 上
+    - NameNode：负责管理文件系统的命名空间 包括文件、目录、权限等元数据 还需要维持文件块的复制策略 使得 DataNode 上的负载均衡 数据本身不会经过 NameNode 使得性能瓶颈不会出现在 NameNode 上
+    - DataNode：负责存储文件块的实际数据 通过心跳告知 NameNode 自己的存储情况与状态 使得 NameNode 可以维持文件的最小副本数
+  - 一般 NameNode 和 DataNode 会运行在不同的机器上 这是为了避免性能受到影响
+  - 尽管 HDFS 允许在一个机器上运行多个 DataNode 但是一般情况下一个 DataNode 会运行在一个独立的机器上 这样才能保证数据的备份与冗余是有效的
+  - HDFS 的使用和其他文件系统类似 有目录的层级 但是不支持硬链接和软链接
+- Replica Placement
+  - rack-aware placement：HDFS 会尽量把副本放在不同的机架上 以防止机架故障 但是这样也带来了 RTT 的增加
+  - 一般的 replica factor 是 3 其中至少有一个副本在一个不同的机架上 HDFS 会保证每一个机架上的 replica 数量小于`(总 replica 数 - 1) / rack 数 + 2`
+- Safemode
+  - 当 NameNode 启动时会进入 safemode 用于检查文件系统的完整性
+  - NameNode 会检查当前连接的所有 DataNode 的 replica 数量是否满足大于等于最小副本数的要求 满足则退出 safemode 否则继续等待
+- Persistence
+  - NameNode 使用一个叫 EditLog 的文件来记录对文件元数据的事务操作 这个日志并非 HDFS 的一部分 而是存储在本地 OS 的磁盘上
+  - NameNode 还会有一个叫 FsImage 的文件 用于记录文件系统的元数据 包括所有文件块的映射与属性 同样的也是存储在本地磁盘上
+  - 每次启动时 NameNode 会读取这两个文件来恢复文件系统的状态 同样也有 checkpoint 机制 与 MySQL 的 binlog 类似
+  - DataNode 会每个块作为本地文件存储在磁盘上 并且启发式的分为多个目录存储
+- Communication
+  - HDFS 使用 TCP/IP 协议进行通信 即 RPC
+- Robustness
+  - 一旦一个 DataNode 挂掉 NameNode 会把这个 DataNode 上的块标记为损坏 并且会在其他 DataNode 上复制一个新的块以保证副本数量
+  - HDFS 会定期迁移数据块以保证均衡负载 保证了集群可以自动扩展 只需要增加 DataNode 即可
+  - 所有数据块都会有 checksum 用于检查数据的完整性
+  - 如果 FsImage 或者 EditLog 损坏了 NameNode 会从其他节点上的副本恢复数据（如果配置了多份副本）
+- Data Organization
+  - block size 默认是 128MB
+  - 读数据可以并发进行
+  - 写数据和 GFS 一样 需要异步的流水线操作 比较慢
+- HDFS 也有命令行和 WEB 界面 可以使用 Java 等语言来操作
+
+### HBase
+
+- HBase 是一个分布式的、面向列的、基于 HDFS 的数据库 适合存储大量的结构化数据 是 Hadoop 的一个子项目
+- HBase 的重点是大量数据的分布存储 并且非常灵活 其他类似于 Neo4j 的图数据库则是专门为某种非关系型数据设计的
+
+#### Data Model
+
+- HBase 的数据带有版本号 形成了一个三维的表结构 如果为空则读取最新时刻的数据 也就是说表是稀疏的 实际存储类似于 JSON
+- HBase 的行是完全有序的 类似于 SSTable
+- HBase 的列被划分为列族 相当于在列的顶层再加了一层结构 且列族内的列可以动态增加 导致数据是半结构化的 列族作为前缀标识数据
+- Region
+  - 水平划分的数据块称为 region
+  - HBase 进行分布存储的单元就是 region
+- Locking
+  - HBase 对于元数据文件会加锁
+- Namespace
+  - 类似于数据库的概念 每个 Namespace 会有独立的权限管理
+- HBase 要求在删除表前先 Disable 表
+
+#### Architecture
+
+- 也是使用 Zookeeper 来进行集群管理 底层存储则是 HDFS
+- Master-Slave 架构
+  - Master：负责管理 RegionServer
+  - RegionServer：负责管理 Region 数据
+
+## 12.30
+
+### Hive
+
+- Hive 是一个基于 Hadoop 的数据仓库工具（即将 Hadoop 转换为数据仓库） 用于让用户使用 SQL 来查询和管理大规模的数据（比如 Facebook 的数据）
+- Hive 的优势在于 数据可以以原始格式（如 JSON、CSV 等）存储在 HDFS 上 但仍可以通过 SQL 查询 即 Schema on Read 在查询时才会解析数据 初始加载数据非常快（同理 Schema on Write 的查询性能会更好）
+
+- DML（Data Manipulation Language）
+  - 使用`LOAD DATA INPATH '...' INTO TABLE table_name`来加载数据 此时未做 ETL 操作 只是把原始数据放到本地的 HDFS 中
+  - 加载数据时可以使用`PARTITION (ds='2008-08-15')`来指定分区
+  - 等对这张表真正进行查询时 比如`SELECT * FROM table_name` 才会对加载的数据进行 ETL 即把文件从 HDFS 取出 转换为 Parquet 的格式加载到 Hive 的表 然后使用 SQL 语句进行查询
+- Architecture
+  - HiveServer：负责接收客户端的请求 并且将请求转发给对应的 HiveServer2
+  - Metastore：存储元数据 可以与 HiveServer 分开部署
+- Tables
+  - Partition & Bucket：分区与桶 桶是对分区的进一步划分 都是为了提高查询性能 另外桶的划分还方便了数据采样
+- Querying
+  - 支持 MapReduce 脚本
+- File Formats
+  - TextFile
+  - SequenceFile
+  - RCFile（Record Columnar File）
+    - 一种列式存储格式 先把数据按行划分为 Row Groups 然后再按列存储每个 Row Group 里的数据 适合 OLAP
+  - ORCFile（Optimized Row Columnar File）
+    - 与 RCFile 类似 在头尾加了一些元数据 默认 250MB 一个 stripe 适合 OLAP
+  - Parquet
+    - 一种列式存储格式 会进行差值压缩 适合 OLAP
+- Compression
+  - LZO
+
+### Flink
+
+- Flink 是一个流式计算框架 用于处理有状态的数据流 即处理下一个数据需要依赖上一个数据的结果
+- Basic Concepts
+  - Stream：数据流 包括无界流和有界流 Real-time 和 Recorded
+  - State：状态 即数据流的中间结果 保存在内存或磁盘上 周期性的做 CKPT 持久化 Keyed State 会使用哈希保证同一个 key 的状态会被保存在同一个 TaskManager 上
+  - Time：时间 有 Event Time 和 Processing Time 之分 前者是数据产生的时间 后者是数据处理的时间
+- APIs
+  - SQL/Table API：把数据流当作动态表来处理
+  - DataStream API：对数据流进行 map、filter、join 等操作
+  - ProcessFunction：用于处理数据流中的每个事件
+- Checkpoint **（没听懂 讲的太烂了）**
+  - Flink 会周期性的做 Checkpoint 用于保存状态 以便在失败时恢复回放
+  - 每个 Checkpoint 的两端会用一个称为 Barrier 的特殊事件来标记
+  - Flink 会等到不同的流都到达 Barrier 时 即对齐时才会进行 Checkpoint 然后把 Barrier 前的状态都落盘保存
+  - 需要保存的状态包括 流的位置、多个流输入时需要的 Barrier 状态、最终输出结果等
+  - 等待 Barrier 对齐会浪费时间 也可以做 Unaligned 的 Checkpoint 只需要把 Barrier 之前的所有输入状态与输出结果保存即可 但是同时记录的状态会更多 需要做权衡
+  - 使用 RocksDB 来异步存储状态数据 可以使最新的状态数据在内存中
+- Watermark
+  - 用于处理乱序数据 会在数据流中插入一个 Watermark 用于标记数据的时间
+  - 比如 Watermark=10 表示 10 之前的数据都已经到达并且处理完毕
+  - 节点会记录水位线的最大值 接受多个输入时会取较小值
+  - 水位线是严格递增的 保证了多个流的数据不会交叉乱序 **（不懂）**
+- Window
+  - 按时间划分数据流为 batch 可能会因为时间密度不均匀导致数据倾斜
+- Architecture
+  - JobManager：负责任务调度
+  - TaskManager：Worker 中负责执行任务
+  - Flink Program：用户编写的程序
+
+### AI-6：Transformer
+
+- Transformer 是一个用于处理自然语言的模型 由 Google 提出 解决了 RNN 的并行问题
+- 多头注意力机制：
+- 掩码机制
+- 注意力机制
+  - Attention(Q, K, V) = softmax(QK^T / sqrt(d_k))V
+  - 自注意力机制：计算每一个词与句子中其他词的关系
