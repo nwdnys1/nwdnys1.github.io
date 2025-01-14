@@ -1141,332 +1141,392 @@ excerpt: " "
 ### Raft
 
 - Raft 是一个分布式一致性算法 用于保证 replicated log 的一致性
-- Appraoch
-
+- Raft's Approach
   1. Leader Election
-
-  - 选取一个 server 作为 leader
-  - 检测 leader 是否挂掉 选取新的 leader
-
+     - 选取一个 server 作为 leader
+     - 检测 leader 是否挂掉 选取新的 leader
   2. Log Replication
-
-  - leader 接受 client 的请求 添加到 log 中
-  - leader 发送 log 给其他 server
-
+     - leader 接受 client 的请求 添加到 log 中
+     - leader 发送 log 给其他 server
   3. Safety
+     - 保证 logs 的一致性
+     - 只有保持日志 up-to-date 的 server 才能成为 leader
 
-  - 保证 logs 的一致性
-  - 只有保持日志 up-to-date 的 server 才能成为 leader
+#### Election
 
 - Server states（每个 replica 同时只能处于一个状态）
-
   - Leader：接受 client 请求 添加到 log 中 发送 log 给其他 server
-  - Follower：接受 leader 的 log
-  - Candidate：参与 leader 的选举
-
+  - Follower：接受 leader 的 log 当 leader 挂掉时成为 Candidate 不会向其他 server 发送消息
+  - Candidate：参与 leader 的选举 当发现 leader 时成为 Follower
 - Term
-
-  - 一个任期（term）是一个逻辑时钟
+  - Raft 将时间划分为离散的 term 一个 term 会以 election 开始 当选出的 leader 挂掉时或是没有选出 leader 时结束并开始新的 term
   - 每个 term 有一个唯一的 leader term 最高的 leader 说了算
-  - 一个 term 由三个阶段组成
+  - 一个 term 由几个阶段组成
     - Election：选举 leader
-    - Normal Operation：leader 接受 client 请求 添加到 log 中 发送 log 给其他 server
-    - Election Timeout：leader 挂掉 选取新的 leader
-
+    - Normal Operation：成功选出 leader
+    - Split Vote：由于分票导致选举失败 开始新的 term
+    - Election Timeout：此任期的 leader 挂掉 开始新的 term
 - Heartbeat & Timeout
-
   - leader 每隔一段时间发送 heartbeat 给其他 server
   - follower 收到 heartbeat 重置 timeout
-  - 如果 follower timeout 了 则成为 candidate 开始选举
-
+  - 如果心跳 timeout 了 则成为 candidate 开始选举
+  - 一般 timeout 在 100ms-500ms 之间
 - Election Basics
-
   1. 状态转为 candidate
   2. 增加 term
-  3. 投票给自己
-
-  - 不断发送 RequestVote RPC 给其他 server 直到
-    1. 得到半数以上的票数->成为 leader
-    2. 收到一个 leader 的 heartbeat->转为 follower
-    3. 没有人赢->增加 term 重新选举
-  - 需要维护一个 votedFor 变量 保证每个 server 在一个 term 只投一次票
-
+  3. 投票给自己 并不断发送 RequestVote RPCs 给其他 server 直到
+  - 得到半数以上的票数->成为 leader
+  - 收到一个 leader 的 heartbeat->转为 follower
+  - 没有人赢->增加 term 重新选举
+  - 所有节点需要维护一个 votedFor 变量 代表每个任期都投票给了哪个节点 从而保证在同一个 term 只投一次票 也就保证了 majority 的唯一性
+  - 同时节点也需要维护一个 currentTerm 变量 代表自己见过的最大任期 保证自己不会把票投给 term 比自己小的节点
 - Liveness
-
-  - 如果每个 server 的 timeout 是相同的 当 leader 挂掉后 所有 server 都会在同一时间成为 candidate 这就是 split vote 现象 会导致选举大概率失败
+  - 如果每个 server 的 timeout 是相同的 当 leader 挂掉后 所有 follower 会在同一时间成为 candidate 这就是 split vote 现象 会导致选举大概率失败
   - 解决方法是随机化 timeout 确保大概率只有一个 server 成为 candidate
 
+#### Log Replication
+
+- Log structure
+  - 每个 log entry 代表<index, term, command>
+  - index 代表 log entry 在 log 中的位置 term 代表 log entry 是在哪个 term 产生的 command 代表 client 的请求
 - Update Logs
-
   1. client 发送请求给 leader
-  2. leader 添加到 log 中
-  3. leader 发送 log entry 给 follower
-  4. leader 收到半数以上的 follower 的 ack 后 commit log entry 并发送 commit message 给 follower
-
+  2. leader 添加到自己的 log 中
+  3. leader 发送 AppendEntries RPCs 给 follower
+  4. leader 收到 majority 的 ack 后提交 log entry 并发送 commit message 给 follower 同时在 rsm 上执行 command
 - Consistency of Logs
+  - Raft 保证这样的性质：如果两个 server 上的 log entries 有相同的 index 和 term 那么这两个 entries 的内容一定相同 并且他们之前的所有 entries 也一定相同
+  - AppendEntries RPC 会包含 leader 当前日志的 checksum 如果 follower 发现日志不一致则拒绝 这样就保证了上述的性质
+  - leader 如果与 follower 不一致 会导致后续没法添加 log 因此 leader 被拒绝后 会找到不一致的部分 发送给 follower 进行覆写 最后添加新的 log entry 使得两者的日志完全一致
+  - 上述的性质导致了即使一条 cmd 已经得到 majority 的 ack 并且在 rsm 上被执行 但是仍有可能被覆写 这样的问题会在下面提到的 Safety 中解决
 
-  - Raft 保证以下的性质
-    - 如果两个 server 上的 log entries 有相同的 index 和 term 那么这两个 entries 的内容一定相同 并且他们之前的所有 entries 也一定相同
-  - AppendEntries RPC 会计算前缀日志的 checksum 如果不一致则拒绝
-  - leader 被拒绝后 会找到不一致的部分 发送给 follower 进行覆写 最后添加新的 log entry
+#### Safety
 
-- Safety
-  - leader 挂掉后有可能选取一个日志很短的 server 作为 leader 这样会导致其他 server 的日志被大部分覆写
-  - 因此必须选取 term 和 index 最新的 server 作为 leader(先 term 后 index) 即 Vote 时 follower 如果发现自己比 candidate 新则不投票
+- 如果让一台严重不一致的 server 成为 leader 就会导致上述的覆写问题 因此需要对 leader 的选举进行一定限制
+- 因此必须选取 term 和 index 最新的 server 作为 leader(先 term 后 index) 即 follower 如果发现自己的 log 比 candidate 更新则不投票
+- 这样的限制保证了 所有被 commit 的 log entry 一定会存在于未来所有 leader 的 log 中 也就保证了 leader 不会覆写一个已经被 commit 的 log entry（这里指的是当前 term 提交的 log entry）
+- 但是还不够 以前的 entry 还是有可能被覆写 此时加入 Commit Rule：对于一个先前的 log entry 除了需要存在于 majority 的 log 之外 还需要至少有一个当前任期的 entry 也存在于 majority 的 log 中
 
 ## LEC 17: Introduction to Computing Network
 
-### Network
+### Intro to Network
 
-- Layers(for CSE)
+- Layers in Network (for CSE)
   - Link Layer：把数据包从一个节点传输到另一个节点 比如 WiFi、Fiber
-  - Network Layer：通过多个 link 转发数据包从一个节点到另一个节点 比如 IP
-  - End-to-End Layer：所有剩余的应用接口都属于这一层 它们都是应用和应用之间的约定和协议 比如 HTTP
+  - Network Layer：给定两个节点 找到一条路径 通过不断的转发将数据从一个节点传输到另一个节点 比如 IP
+  - End-to-End Layer：所有剩余的应用接口都属于这一层 它们都是应用和应用之间的约定和协议 比如 TCP、UDP
   - Application：应用层 并非网络的一部分
 - Hour Glass Protocols
-
-  - Network 层负责了连接 这个连接的协议应该越少越好 便于简化统一
+  - Internet 的架构就像是一个沙漏 中间的 Network 层是最窄的
+  - 这是因为 Network 层负责了连接 这个连接的协议应该越少越好 便于简化统一
   - 因此目前的网络协议都是基于 IP 的
-
-- Packet Encapsulation
-
+  - 另外 网络层不应该关心数据包的内容是否正确 这能够保证通信的速度尽可能快 但是质量不一定好 也即 Best Effort
+- Packet Encapsulation（一个网络包的结构）
   - Data
   - TCP/UDP Header
   - IP Header
-  - Frame Header & Trailer
-
+  - Frame Header & Trailer（以太网为例）
 - Application Layer
-
-  - Entities：Client&Server
+  - Entities：Client & Server
   - Namespace：URL
   - Protocols：HTTP、SMTP、FTP、DNS
-
+  - 关心的是数据的内容
 - Transport Layer
-
-  - Entities：Sender&Receiver、Proxy、Firewall
+  - Entities：Sender & Receiver、Proxy、Firewall
   - Namespace：Port 65535 个
   - Protocols：TCP、UDP
-
+  - TCP 会关心数据的丢包与重传 UDP 不关心
 - Network Layer(IP Layer)
-
   - Entities：Gateway、Bridge、Router
   - Namespace：IP
-  - Protocols：IP、ICMP、ARP
+  - Protocols：IP、ICMP
+  - 关心的是如何根据路由表找到下一跳
 
-- Link Layer
+### Link Layer
 
-  - Physical Transimission w/ Shared Clock
-    - 使用两条线 一条传输 clock 一条传输 data 每当遇到 clock 的上升沿就采样一次 data clock 的频率越高 传输速率越快
-    - 这种传输要求 data 和 clock 的高度同步 不适用于长距离传输 只适用于 CPU 内部寄存器之间的数据传输
-  - Physical Transmission w/o Shared Clock
-    - 使用三条线 一条传输 data 一条传输 ready 一条反向传输 ack
-    - 初始时 ready 和 ack 都为 0 假设 A 要发送数据给 B
-    - A 将数据放在 data 线上 然后将 ready 置为 1
-    - B 收到 ready 和 data 后将 ack 置为 1
-    - A 收到 ack 后将 ready 置为 0
-    - B 收到 ready 后将 ack 置为 0 这样就完成了一次数据传输
-    - 需要两轮 RT 才能完成一次数据传输 考虑并行化来提高传输速率
-    - 并发时数据会有互相干扰
-  - Serial Transmission
-    - VCO（Voltage Controlled Oscillator）是一种可以根据数据的变化来控制输出频率的电路 使用 VCO 作为接收端的时钟源 可以实现数据的单线传输
-    - Manchester Code：VCO 非常依赖于数据的变化 为了让数据一直变化 采用了曼彻斯特编码 即 0->01 1->10 相对的 牺牲了一半的传输速率
-    - Isochronous-TDM：时分复用 为了避免数据的干扰 一个单位时间内分成多个时隙 每个时隙只能传输一个数据源的数据
-    - Asynchronous Link：每个数据包（frame）都有一个 header 用于标识数据的来源和目的地 数据包全部发给 switch 来聚合再发送
-      - 如何知道数据包的开始和结束？用 7 个 1 标记 如果数据内容中出现了 6 个 1 则在后面加一个 0 于是 7 个 1 就变成了 11111101 6 个 1 就成了 1111110
-      - 如何知道数据包的内容是否出错？可以用 checksum
-      - 我们不仅希望检测出错误 更希望能够纠正错误 因此我们可以用校验位编码来进行纠错
-        - Hamming Distance：两个数据之间不同的位数
+- Physical Transimission w/ Shared Clock
+  - 使用两条线 一条传输 clock 一条传输 data
+  - 每当遇到 clock 的上升沿就采样一次 data
+  - clock 的频率越高 传输速率越快
+  - 要求 data 和 clock 的高度同步 在宏观下无法做到如此精细的控制
+  - 不适用于长距离传输 只适用于 CPU 内部寄存器之间的数据传输
+- Physical Transmission w/o Shared Clock
+  - 使用三条线 一条传输 data 一条传输 ready 一条反向传输 ack
+  - 初始时 ready 和 ack 都为 0 假设 A 要发送数据给 B
+  - A 将数据放在 data 线上 然后将 ready 置为 1
+  - B 收到 ready 后 读取 data 然后将 ack 置为 1
+  - A 收到 ack 后将 ready 置为 0 同时可以继续发送下一个数据
+  - B 收到 ready 后将 ack 置为 0 这样就完成了一次数据传输
+  - 需要两轮 RT 才能完成一次数据传输 考虑并行化来提高传输速率
+  - SCSI、printer 都是这种方式
+  - 并发时 会由传输最慢的线决定速度 并且数据会有互相干扰
+- Serial Transmission
+  - VCO（Voltage Controlled Oscillator）是一种可以根据数据的变化来控制输出频率的电路 使用 VCO 作为接收端的时钟源 可以实现数据的单线传输
+  - Manchester Code：VCO 非常依赖于数据的变化 为了让数据一直变化 采用曼彻斯特编码 即 0->01 1->10 相对的 牺牲了一半的传输速率
+  - 多个端复用同一根线有两种方式：
+    - Isochronous-Multiplexing：同步的分时复用
+      - 为了避免数据的干扰 把 1s 成多个 frame 每个 frame 只能传输一个数据源的数据 相当于一个端的数据被放在了分开的多个 frame 里
+      - 优点是非常稳定 即使不发送数据也会保留 frame 给端 缺点是利用率是固定的 超过最大端数直接拒绝 一般用于电话线（其实现在也不太用了 多用于航天航空通信）
+    - Asynchronous Link：Frame & Packet
+      - 每个数据包（frame）都有一个 header 用于标识数据的来源和目的地 数据包全部发给 switch 排队等待 switch 处理后再发送数据包 广泛用于现在的各种数据传输
+      - 一个细节是 queue 的长度不是越长越好 反而应该是一个合适的长度 并且丢弃所有超出长度的数据包
+      - Frame's separator：用 7 个 1 标记 如果数据内容中出现了 6 个 1 则在后面加一个 0 防止误判 比如数据中的 7 个 1 就变成了 11111101 6 个 1 就成了 1111110
+      - Error Handling：一般会对包头进行 checksum 注意我们不仅希望检测出错误 更希望能够纠正错误 因此需要使用一些特殊编码来进行纠错
+        - Hamming Distance：两个数据之间不同的位数 编码的海明距离越大 也就保证了错误的编码越不容易落到合法空间 可以检测与纠正的错误也就越多
         - 一种简单的编码是 2bits->3bits
           - 00->000 01->011 10->101 11->110
-          - 这种编码可以保证任意两个编码之间的 Hamming Distance 至少为 2 也即当某一个编码发生 1 位的错误 必定可以被检测出来
+          - 这种编码保证任意两个编码之间的 Hamming Distance 至少为 2 也即当某一个编码发生 1 位的错误 必定可以被检测出来
         - Hamming Code
-          - 4bits->7bits 允许纠正 1 位错误 检测 2 位错误
+          - 4bits->7bits 允许纠正 1 位错误 检测 2 位错误（即 2 位错误不可能落到合法空间）
           - P1、P2、P4 是校验位 用 P3、P5、P6、P7 的异或来计算
-          - 3 个校验位出错的可能有 7 种 即 P1 出错、P2 出错、P1&P2 出错...P1&P2&P4 出错 刚好包含了 7 个位 海明编码保证了出错的校验位之和就是出错的位 比如 P1&P2 出错代表了第 3 位出错
+          - 3 个校验位出错的可能有 7 种 即 P1 出错、P2 出错、P1&P2 出错...P1 & P2 & P4 出错 刚好包含了 7 个位 对应 7 种错误
+          - 海明编码保证了出错的校验位之和就是出错的位 比如 P1 & P2 出错代表了第 3 位出错
 
 ## LEC 18: Network: Network Layer
 
 ### Network Layer
 
-- IP 是 Best Effort 的 不保证数据包一定到达 以此换来更小的时延
 - Addressing Interface
   - Network attachment point（NAP）：网络接入点
-  - Network address
+  - Network address：接入 NAP 后获得的地址
   - Source & Destination
-  - NETWORK_SEND(segment_buffer,dest,network_protocol,end_layer_protocol)
-  - NETWORK_HANDLE(segment_buffer,source,network_protocol,end_layer_protocol)
-- Routing
-  - 两种路由方式
-    - Static Routing：静态路由
-    - adaptive routing：自适应路由
-  - Routing Table
-    - 一个路由表包含了多个路由项 形如<IP,next_hop>
+
+#### Routing
+
+- 两种路由方式
+  - Static Routing：静态路由
+  - Adaptive routing：自适应路由 随着节点的变化而变化
+- Routing Table
+  - 一个路由表包含了多个路由项 形如<IP,next_hop> 即根据 IP 找到下一跳
+  - 网络层的工作分为两个部分
     - Control-plane：负责构造路由表 正确性要求高
-      - Distributed Routing
-        1. Nodes learn about their neighbors by the Hello protocol
-        2. Nodes learn about other reachable nodes by advertisements
-        3. Nodes determine the min-cost routes of all routes they know
-      - 2 routing protocols
-        - Link-state：节点 advertise 给所有节点 他到其他邻居的 costs 通过 Dijkstra 算法计算最短路径
-          - Pros & Cons
-            - Fast convergence
-            - flooding is costly
-            - Only good for small networks
-        - Distance-vector：节点 advertise 给所有邻居 他到所有 known nodes 的 costs 通过 Bellman-Ford 算法计算最短路径
-          - 可能会因为节点之间的断开而导致无限循环 因此需要 split horizon 即不能把来自某个节点的信息再发给这个节点
-          - Pros & Cons
-            - Low overhead
-            - Convergence time is proportional to longest path
-            - Infinite problem
-            - Only good for small networks
-      - How 2 Scale
-        - Path-vector
-          - 维护路径向量 也即路径上的所有节点
-          - 收敛速度更快 overhead 小于 link-state
-          - 如何避免 loop？保证路径中没有自己
-          - 遇到多条路径通向一个节点时如何选择？选择最短的
-          - 图变化了怎么办？router 需要抛弃所有停止 advertise 的邻居的 path
-        - Hierarchicy
-          - 通过分为不同 region 来减少路由表的大小
-          - a.k.a AS（Autonomous System）自治系统
-          - 带来的问题是需要快速根据 IP 查询出所在的 region
-          - 必须把 address 和 location 进行绑定 也就是说一个地区的 IP 必须是相同前缀的
-          - BGP（Border Gateway Protocol）是一个用于跨 region 交换 path-vector 的协议
-        - Topological Addressing
-          - CIDR（Classless Inter-Domain Routing）是一个用于减少路由表大小的协议 通过将 IP 分为 prefix 和 suffix 两部分来减少路由表的大小 比如 18.0.0.0/24
-    - Data-plane：负责根据路由表找到下一跳 性能要求高
-      - 基本接口逻辑
-        - SEND：发送给 HANDLE
-        - HANDLE：如果是自己的则处理 否则转发
-      - Forwarding
-        - 查找路由表 如果没有则丢弃
-        - TTL（Time To Live）：每经过一个节点 TTL 减一 如果 TTL 为 0 则丢弃
-        - 更新 header checksum
-        - 转发给 outgoing port
-        - transmit packet
-      - DPDK（Data Plane Development Kit）
-        - Intel 的 DPDK 通过轮询检查端口是否有转发来提高性能
-      - RouteBricks
-        - 伯克利的几个学生 通过几台 PC 实现了超高带宽的路由器
+    - Data-plane：负责根据路由表找到下一跳 要求速度快
+
+##### Control-plane
+
+- Distributed Routing Overview
+  1. 节点通过 Hello protocol 认识其邻居
+  2. 节点通过 advertisements 知道邻居都认识谁
+  3. 节点通过自己知道的 routes 计算最短路径
+- 2 Routing Protocols
+  - Link-state（发的人多 发的内容少）
+    - 节点的 advertisements 中包含其所有邻居的 costs
+    - 使用 flooding（广播）的方式 advertise 所有节点
+    - 通过 Dijkstra 算法计算最短路径 即找到当前 min-cost 的节点 然后用其邻居更新自己的 cost 直到所有节点的 min-cost 都被确定
+    - 因为是广播 因此部分节点 fail 不会影响整个网络
+    - Pros & Cons
+      - Fast convergence
+      - flooding is costly：2 \* Nodes \* Lines 的开销
+      - Only good for small networks（对于大网络来说开销太大）
+  - Distance-vector（发的人少 发的内容多）
+    - 节点的 advertisements 中包含所有已知节点的 costs 以及是通过哪个邻居到达的
+    - 只对邻居进行 advertise
+    - 通过 Bellman-Ford 算法计算最短路径 即不断使用邻居的信息更新自己的信息 最终 cost 会收敛到最小值
+    - Infinity Problem：可能会因为节点之间的断开而导致无限循环 因此需要 Split Horizon 即不能把来自某个节点的信息再发给这个节点（比如 A 到 C 的最短路径是 A->B->C 那么 A 不应该把这个信息发给 B）
+    - Pros & Cons
+      - Low overhead：2 \* Lines 的开销
+      - Convergence time is proportional to longest path
+      - Infinite problem
+      - Only good for small networks（对于大网络来说收敛时间太长）
+- How 2 Scale：上述两种方法都只适用于小网络 如何扩展到更大的网络？
+  - Path-vector Routing
+    - 与 Distance-Vector 类似 只不过维护的是路径向量表 也即路径上的所有节点 然后转换为转发路由表
+    - 收敛速度更快 开销较大 但仍小于 link-state
+    - 如何避免 loop？保证路径中没有自己即可
+    - 遇到多条路径通向一个节点时如何选择？选择最短的
+    - 图变化了怎么办？router 需要抛弃包含了一个挂掉节点的路径（邻居停止 advertise 就被视为挂掉）
+  - Hierarchicy of Routing
+    - 通过将节点分到不同 region 来减少路由表的大小 即只需要记录到某个 region 的 next_hop（仍需要维护 local region 的节点路由表）
+    - Region 也被称为 AS（Autonomous System）自治系统
+    - 随之带来的问题是需要快速根据 IP 地址查询出所在的 region
+    - 因此必须把 address 和 location 进行绑定 即一个地区的 IP 必须是相同前缀的
+    - 同时需要两个路由协议 负责跨 region 的路由与 region 内部的路由
+    - BGP（Border Gateway Protocol）就是用于跨 region 的 path-vector 的协议
+  - Topological Addressing
+    - 尽管 BGP 是跨 region 的路由协议 但是它仍然是通过记录 IP 地址来进行路由的（即 IP 地址的集合）这样就导致路由表很大
+    - CIDR（Classless Inter-Domain Routing）是一个用于压缩连续 IP 地址的协议 通过将 IP 分为 prefix 和 suffix 两部分来减少路由表的大小 比如 18.0.0.0/24 代表了 18.0.0.0 到 18.0.0.255 的所有地址
+- 最终的架构就变成了两个路由表 一个是 local region 的路由表 一个是跨 region 的路由表 使用 BGP
+
+##### Data-plane
+
+- Data-plane 关注的是如何快速转发数据包 对于一个万兆的交换机 一秒钟可能要处理 10^9 个数据包 也就意味着只有几百个 cycle 来处理一个数据包 因此需要非常精简的代码逻辑
+- Interface
+  - packet：数据包 struct
+    - src：源地址
+    - dest：目的地址
+    - end_protocol：应用层协议
+    - payload：数据
+  - NETWORK_SEND(segment_buffer,dest,net_protocol,end_protocol)
+    - 封装数据包 并把数据包交给 HANDLE
+  - NETWORK_HANDLE(packet,net_protocol)
+    - 检查 dest 如果是自己 则转发个 end_layer
+    - 否则查找路由表 并通过 link 层发送给 next_hop
+- Forwarding
+  - 查找路由表 如果没有则丢弃
+  - TTL（Time To Live）：每经过一个节点 TTL 减一 如果 TTL 为 0 则丢弃 也就是最多转发几次 主要是为了防止 loop
+  - 更新 header checksum
+  - 转发给 outgoing port
+  - 将数据包通过 link 层发送给 next_hop
+- DPDK（Data Plane Development Kit）
+  - Intel 的 DPDK 通过轮询检查端口是否有转发来提高性能
+- RouteBricks
+  - 伯克利的几个学生收到 DPDK 的启发 通过几台 PC 实现了超高带宽的路由器
 
 #### NAT (Network Address Translation)
 
-- 将内网的 IP 转换为外网的 IP
-- 形如<Src IP,Src Port,NAT Port>
-- 问题在于 网络层的 IP 协议 去修改了 Payload 中的 Port 信息 破坏了通用性
+- 将内网的 IP 翻译为外网的 IP 以实现多个内网设备共享一个外网 IP 映射到其不同的端口上（也就是复用了 IP 利用了端口）
+- 为什么需要 NAT？
+  - IPv4 地址不够用 因此拆分为内网和外网地址 外网仍旧是唯一的 而内网地址可以在不同的局域网中复用（IPv6 则不需要 NAT）
+  - 内网中的设备不会被外网直接访问 起到了保护作用
+- Router 会保存形如 <Src IP, Src Port, NAT Port> 的映射表 也就是将内网的一个端口映射到了 Router 的一个连接到外网的端口上
+- 网络层的 IP 协议 去修改了 Payload 中的 Port 信息（属于 end layer）破坏了解耦 如果 end layer 更换为一个没有 Port 的协议 则 NAT 就无法工作（现实是 TCP 与 UDP 霸权了）
 
 ## LEC 19: Network: End-to-end Layer
 
 ### Case Study: Ethernet
 
+- Basics
+  - 以太网一开始是为网络层设计的 后来被 IP 打败了 最后作为 Link Layer 的协议使用
+  - 还记得网络层中路由找到 next_hop 后把数据包发送给了一个路由器吗？接下来这个路由器需要干的事就是通过以太网发送数据包给局域网内的某个设备
+  - 按我的理解 IP 就是负责不同局域网之间的路由 而 eth 则是负责局域网内不同设备之间的路由 其原理是类似的
+  - IP 关心所有节点 而 eth 只关心与自己直接相连的节点
+  - 以太网的地址是 MAC 地址（48 bit） 不过 MAC 地址并非严格唯一的 基本只能保证在一个局域网内唯一（由于 eth 只用于局域网内的通信 因此足以）
 - Hub & Switch
-  - Hub：广播所有数据包
-  - Switch：只广播给目标节点
-- HANDLE
+  - 都是局域网内部的设备
+  - Hub：广播所有数据包到所有端口
+  - Switch：只发送数据包给目标端口
+- HANDLE API（4 broadcat）
   - 如果是自己的地址 处理 否则忽视 无需转发
-  - 如果是 BROADCAST 地址 处理
-  - 靠 MAC 地址来传输 不过 MAC 地址并非严格唯一的 基本只能保证在一个局域网内唯一
+  - 如果是 BROADCAST 地址（一个特殊的地址） 处理
 - Layer Mapping
-  - 形如<IP,MAC> 不在本网段内的会发送给 router
+  - 根据 dest 的 IP 判断目标是否在同一个局域网内（根据是否是内网 IP 来判断）
+  - 若是发送给局域网内部的设备 只需要通过 MAC 地址即可确认
+  - 若是发送给外网的设备 需要发送给 router router 会根据 IP 地址找到下一跳发送给其他局域网的 router
+  - 因此设备需要维护一张映射表<IP, MAC> 其中内网 IP 映射到内网 MAC 外网 IP 映射到路由的 MAC
+  - router 为了进行转发 还需要维护直接连接的其他 router 的 <IP, MAC>
 - ARP（Address Resolution Protocol）
-  - 给定 IP 找到对应的 MAC
-  - 通过广播的方式找到目标 MAC 填入 ARP 表中
-  - 类似一个缓存
-  - ARP Spoofing：通过伪造 ARP 包来欺骗别人的 ARP 表
-    - 防御方法：ARP Cache Poisoning Detection 也就是监测 ARP 包的流量 异常就会有人给你打电话哈（治标不治本）
+  - 通过 ARP 协议 一个新加入的设备可以构造出<IP, MAC>的映射表
+  - 通过广播的方式询问一个 IP 对应了哪个 MAC 填入 ARP 表中
+  - 类似一个缓存 会不断更新
+  - RARP（Reverse ARP）：通过 MAC 找 IP
+- An Example
+  - app 想要给百度发包 先填入 src IP 与 dest IP
+  - 这是一个外网 IP 因此会发送给 router 即 src MAC 为自己的 MAC dest MAC 为 router 的 MAC
+  - router1 收到包后 根据路由找到了下一跳的 IP 地址 并通过 ARP 解析出 MAC 地址 于是 dest MAC 变为 router2 src MAC 变为 router1 同时根据 NAT src IP 变为 router1
+  - router2 和百度位于同一个局域网内 因此包的 dest MAC 变为百度 src MAC 变为 router2 注意 src IP 仍为 router1 否则百度无法回复给正确的 IP 地址
+- ARP Spoofing：通过伪造 ARP 包来欺骗别人的 ARP 表 从而把数据包发送到 hacker 的设备上 成为了一个中间人
+  - 防御方法：ARP Cache Poisoning Detection 也就是监测 ARP 包的流量 异常就会有人给你打电话哈（治标不治本）
+  - 也可以通过静态 ARP 表来防御 需要手动添加新设备
 
 ### End-to-End Layer
 
+- 端到端层关注的是数据的延迟 丢包 重传等问题
 - Famous Transport Protocols
-  - UDP
-  - TCP
-  - RTP
+  - UDP（User Datagram Protocol）：无连接 不可靠 几乎和 IP 包一样
+  - TCP（Transmission Control Protocol）：面向连接 可靠
+  - RTP（Real-time Transport Protocol）：用于实时传输 基于 UDP
 
-#### Assurance
+#### Assurance of End-to-End Protocol
 
+- 下面讲的是 TCP 如何处理网络层发生的问题
 - at-least-once delivery
-  - 包带上 nonce
-  - sender 保存包的 copy
+  - 包带上 nonce（即 ID）
+  - Sender 保存数据包的 copy
   - 如果超时则重发
-    - timeout 绝对不能是固定的 否则一旦有网络拥塞就会导致大量的重发 导致恶性循环
+    - timeout 绝对不能是固定的 否则一旦有网络拥塞就会导致大量的重发 越重发越拥堵 导致恶性循环
     - 类似的 spring 中的`@Scheduled`注解 就应该采用 fixedDelay 而不是 fixedRate 前者是从上一个任务结束后开始计时 后者是从上一个任务开始时计时
-    - Adaptive Timeout：根据 RTT 动态调整 timeout 初始设为 RTT 的 1.5 倍 一旦再次超时则翻倍
-    - NAK（Negative Acknowledgement）：receiver 向 sender 发送 NAK 通知 sender 有哪些包丢失了 sender 不用 timer receiver 需要 timer
-  - receiver 会返回一个带有 nonce 的 ack
-  - 可能会导致重复 不影响语义
+    - Adaptive Timeout：根据 RTT 动态调整 timeout 初始设为 RTT 的 1.5 倍 一旦发生超时则翻倍
+    - NAK（Negative Acknowledgement）：receiver 给 sender 发送 ack 时 带上丢失的数据包 sender 不用维护 timeout 相应的 receiver 需要 timeout 来判断 NAK 是否丢失 适用于某些特殊情况
+  - Receiver 会返回带有 nonce 的 ack Sender 就可以删除这个 nonce 了
+  - 可能会导致重复 这是 at-most-once 需要解决的问题
 - at-most-once delivery
-  - 检查 nonce 是否重复
-  - 会产生 tombstone 即无法删除的数据
-  - 另一种方法是实现幂等性的应用
-  - 或者记录最大连续的 nonce 小于等于的 nonce 都不接受
-  - 或者为每一个新的请求使用唯一的端口（端口不够用）
+  - 维护一张收到过的 nonce 表
+  - 收到数据包时检查 nonce 是否重复
+  - nonce 表会无限增长 产生 tombstone 即无法删除的数据（因为无法确定未来会收到哪些 nonce）
+  - 另一种方法是实现幂等性的应用 容忍重复的数据包
+  - 另一种方法是维护递增的 nonce 然后记录收到过的最大连续的 nonce 小于等于这个值的 nonce 都不接受（比如收到过 1 2 3 5 则不接受 1 2 3）不过此时这个值就成为了 tombstone
+  - 另一种方法是为每一个新的请求使用唯一的端口 处理完数据包后关闭端口 问题是端口是有限的 最终一定会循环
   - Duplicate Suppression
-    - sender 最多发送 3 次 则 receiver 可以在 3RTT 后删除这个 nonce
-    - receiver 重启会导致 table 丢失
+    - sender 最多发送 3 次 则 receiver 可以在 3 \* RTT 后删除这个 nonce
+    - receiver 需要把 nonce 表存在内存里（为了性能）这就导致重启会导致表丢失
 - data integrity
-  - checksum
-- stream order&closiing of connections
-  - when out-of-order
-    - buffer（可能会因为长时间未收到而浪费性能）
-    - discard if buffer is full
-    - NAK to speed up
-    - TCP 使用 ACK 不使用 NAK
+  - checksum 无法完全保证 只是概率问题
+- stream order & closing of connections
+  - when out-of-order（如何保证包的顺序？）
+    - 只接受有序的包 乱序的包直接丢弃 问题是浪费了带宽
+    - 接受所有的包 暂存于 buffer 中 直到连续的包都到达 问题是需要很大的 buffer
+    - 结合上述两种方法 当 buffer 满了就丢弃乱序的包 问题是 buffer size 的选择
+    - 使用 NAK 加快丢包的重传 让 buffer 尽快释放
+    - TCP 协议使用 ACK 而没有使用 NAK
 - jitter control
-  - 缓存
-- Authenticity &Privacy
-  - 证书 公私钥加密
+  - 可能会出现延迟抖动 即数据包的延迟不稳定
+  - 解决方法是缓存 保证数据的稳定性
+  - 需要缓存的 segment 数量是 (最长延迟 - 最短延迟) / 平均延迟
+- Authenticity & Privacy
+  - 证书机制 使用公私钥
 
 ## LEC 20: Network: TCP & DNS
 
-### End-to-End Performance
+### End-to-End Layer
 
-- Lock-step protocol：sender 一次只发送一个包 等 receiver ack 了再发送下一个包 会导致很低的带宽利用率
-- Overlapping Transmission：sender 一次发送多个包 receiver 一次 ack 多个包
-  - Fixed Window：sender 一次发送固定数量的包 完后停下来稍作等待 参数 n 由 receiver 决定 因此 receiver 不会阻塞 不过还是有大量的空闲时间
-  - Sliding Window：sender 接受到第 i 个 ack 后发送第 i+n 个包 window 大小相当于 n+1
-    - 一旦有包丢失 window 就会卡住 等重发后才能继续滑动
+#### Assurance of End-to-End Performance
+
+- Lock-step protocol：Sender 一次只发送一个包 等 Receiver ack 了再发送下一个包 虽然保证了正确性 但是会导致很低的带宽利用率
+- Overlapping Transmission
+  - Sender 一次发送多个包 Receiver 一次 ack 多个包
+  - Fixed Window：一次发送固定数量的包 然后停下来稍作等待 窗口大小由 Receiver 的性能决定 因此 Receiver 不会阻塞 不过还是有大量的空闲时间
+  - Sliding Window：Sender 接受到第 i 个 ack 后发送第 i+n 个包 window 大小相当于 n+1
+    - 减少了 Idle Time
+    - 一旦有包丢失 window 就会卡住 等重发后才能继续滑动 这是可以接受的 因为丢包往往意味着网络问题 此时做等待是合理的
     - Window Size
-      - 太小会导致空闲时间和低网络利用率 太大则会阻塞
-      - window size >= RTT \* bottleneck data rate（最低带宽） （为了 performance）
-      - window size <= min(RTT \* bottleneck data rate, receiver buffer size) （为了 congestion control）
-  - TCP Congestion Control
-    - end-to-end 和 network 层负责
-    - Why Congest？处理超时的包没有意义 反而会导致更多的重发
-    - 开始时缓慢增加 window size 一旦出现丢包则迅速减小 window size
-    - AIMD（Additive Increase Multiplicative Decrease）：慢慢增加 快速减小 也即 cwnd+=1、cwnd/=2 但是最开始的增长太慢了
-      - slow start：一开始指数级增加 window size 直到出现丢包
-      - duplicate ack：出现丢包后 receiver 会发送 duplicate ack 通知 sender 有包丢失了
-      - Efficency & Fairness：如果画出二维图 会发现(cwnd1,cwnd2)这个点增长时是沿着 y=x 的方向增长的（因为是+=1） 而减少时则是向着原点减少的（因为是/=2） 最终会收敛到 y=x 上震荡
-  - Weakness of TCP
-    - 无线网的丢包主要是因为信号不好 导致恶性循环
-    - 不适合 datacenters 带宽高时延低 会浪费大量网络资源
-    - 更偏向于 long RTTs
-    - 需要合作的对端
+      - 太小会导致空闲时间和低网络利用率 太大则会阻塞 设置为 1 就变为了 Lock-step
+      - window size >= RTT \* bottleneck data rate（最低带宽 即 sender 与 receiver 的较低值）：可以理解为一个水管 window size 就是水管的容量 RTT 就是水管的长度 bottleneck data rate 就是水管的最小直径 我们要尽量让水充满整个水管
+      - window size <= min(RTT \* bottleneck data rate, receiver buffer size)：为了 congestion control
+- TCP Congestion Control
+  - end-to-end 和 network 层负责 前者控制发送的速率 后者可以直接感知到网络的拥塞（比如丢包 也是一种节流的方法）
+  - Why Congest？处理超时的包没有意义 反而会导致更多的重发 因此需要控制发送的速率
+  - Basic Idea：开始时缓慢增加 cwnd（congestion window）一旦出现丢包则迅速减小 cwmd
+  - AIMD（Additive Increase Multiplicative Decrease）：慢慢增加 快速减小 也即 cwnd+=1 遇到丢包则 cwnd/=2 问题在于最开始的增长太慢了
+  - Slow start：一开始指数级增加 cwnd 直到出现丢包 之后回到 AIMD
+  - Duplicate ack：出现丢包后 Receiver 会发送重复的 ack 通知 Sender 有包丢失了 用于尽快告知 Sender 丢包 从而调整 cwnd
+  - 一旦没有 dup ack 而是 timeout 则说明网络出现了严重的拥塞 会将 cwnd 重置为 1
+  - 最终 TCP 通过不断感知丢包 使得发送速率逐渐逼近网络的最大带宽
+  - Efficency & Fairness：如果画出二维图 会发现(cwnd1,cwnd2)这个点增长时是沿着 y=x 的方向增长的（因为是+=1） 而减少时则是向着原点减少的（因为是/=2） 最终会收敛到 y=x 上震荡 也就保证了公平性
+- Weakness of TCP
+  - 如果 router 的 buffer 太多 会导致时延很长
+  - 无线网的丢包主要是因为信号不好 应该加快速率 由于 TCP 的节流反而会减少速率 导致恶性循环
+  - 不适合带宽高时延低的场景 比如数据中心 会浪费大量网络资源（也就是由于节流而浪费的带宽）
+  - 更偏向于 long RTTs
+  - 需要合作的对端
 
 ### DNS (Domain Name System)
 
+- DNS 的重点在于 hirarchicacy 与 de-centralization
 - 一个域名可以对应多个 IP 地址 一个 IP 地址也可以对应多个域名
-- BIND（Berkeley Internet Name Domain）是由 4 个伯克利学生开发的 DNS 服务器
-- bindings 被记录在多个服务器上 称为 name servers
-  - root zone：ICANN 维护 非盈利
-  - top-level domain：.com .org .net 等 由 Verisign 维护 盈利
-  - second-level domain：由注册商维护 如我注册的 blog.nwdnysl.site
-  - 解析过程从后往前 逐个找到对应的 name server 的 IP 地址 通常返回多个 IP 地址
+- 一开始 DNS 映射都存储在一个 txt 文件中 随着域名越来越多 产生了 BIND
+- BIND（Berkeley Internet Name Domain）是由 4 个伯克利学生开发的 DNS 实现 目前仍被广泛使用
+  - bindings 被记录在多个称为 name servers 的服务器上 以达到 distributing 的目的
+  - Name Servers
+    - root zone：ICANN 维护 非盈利
+    - top-level domain：.com .org .net 等 由 Verisign 维护 盈利
+    - second-level domain：由注册商维护 如我注册的 blog.nwdnysl.site
+  - DNS 的解析过程从后往前 从根服务器开始逐个递归找到对应的 name server 的 IP 地址 通常返回多个 IP 地址
   - DNS 是 global 的 全球唯一
-  - 实际上最后的根域名是`.` 通常省略
+  - 实际上最后的根域名是`.` 比如`blog.nwdnysl.site.` 通常会省略
+  - 为了容错 一个域名通常会有多个 name server
 - 3 Enhancement on Lookup
-  - 缓存 DNS 查询结果到`/etc/hosts`中 name `/etc/resolv.conf`中的 name server 会被优先使用
+  - `/etc/hosts`中可以存储<IP,Domain>的映射 用于本地解析 `/etc/resolv.conf`中可以存储一些 name server 的 IP 会优先使用它们来解析 如果没有配置 则使用默认的根域名服务器
   - DNS Request Process
-    - 递归查询：由 name server 递归查询 性能好
-    - 迭代查询：由 client 逐个查询
+    - 递归查询：由 name server 递归查询 即 A 问 B B 问 C C 问 D 由于 name server 的性能比较好 因此递归查询的速度会比较快
+    - 迭代查询：由 client 逐个查询 即 A 问 B A 问 C A 问 D 虽然速度比较慢 但是中间结果不会丢失
   - Caching DNS
-    - 本地 DNS 会缓存查询结果 cache 有 TTL
-    - name server 也会缓存查询结果
+    - client 与 name server 会缓存 DNS 的查询结果
+    - 缓存有 TTL 一旦过期就需要重新查询
+    - TTL 太长会导致 DNS 解析错误 太短则会导致 DNS 性能下降
 - Hostname & Filename
-
-  - 都是 user-friendly 的 将分层的名字映射到 plane 的名字
+  - 都是 user-friendly 的
+  - 都将 hierarchical 的名字映射到 plane 的名字
   - 都不属于映射对象的一部分
-
 - Bad Points
   - Policy：谁来管理 root zone？技术有国籍
   - root servers 的负载太重 如果查询一个不存在的域名 会造成大量服务器的负载 甚至可以形成 DDOS
@@ -1477,25 +1537,19 @@ excerpt: " "
 ### Naming Scheme
 
 - Naming for modularity
-
   - Retrieval：通过名字找到数据 比如 URL
   - Sharing：通过名字共享数据 比如文件系统
-  - Hiding：封装低层语义
+  - Hiding：封装低层语义 比如 fs 封装了 inode# 从而保护了 fs 的安全
   - User-friendly：易于记忆
-  - Indirection：解耦名字和数据
-
+  - Indirection：解耦名字和数据 一个名字可以对应多个数据
 - Naming Model
-
   - name space：名字的集合
   - value space：值的集合
   - mapping：将名字映射到值的算法
   - context：名字的上下文 比如文件系统的当前目录
-
 - Lookup Algorithm
-
   - recursive lookup：递归查询
-  - multiple lookup：多次查询
-
+  - multiple lookup：多重查询 即逐个依次查询 比如查询 path 中的命令
 - Naming API
   - RESOLVE(name,context)：返回值
   - BIND(name,value,context)：绑定值
@@ -1507,243 +1561,713 @@ excerpt: " "
 
 - CDN 即内容分发网络 通过将数据缓存到离用户最近的服务器上来提高访问速度 典型的边缘计算模型
 - Server Selection
-  - HTTP redirection：通过重定向来选择服务器
+  - HTTP redirection：通过重定向来选择服务器（逐渐废弃）
     - 优点：细粒度控制、根据用户的 ip 来选择
     - 缺点：需要多次请求、server 会有负载
-  - DNS-based：通过 DNS 获取 ip 列表 选择一个最近的
+  - DNS-based：通过 DNS 获取多个 IP 选择一个最近的
     - 优点：避免了重定向的延迟、DNS 缓存减少了开销
     - 缺点：不一定是最近的 因为是根据 DNS
-  - Akamai：通过 DNS 来选择最近的服务器 并缓存（没太听懂）
+  - Akamai：通过 DNS 来选择最近的服务器
+    - 向 Content Provider 发送请求
+    - 返回一个 name server
+    - 不断迭代查询 直到找到最近的服务器
+    - 最近的服务器会缓存客户端需要的数据
+- CDN 的思路是将数据尽可能下推到用户的附近 让我们思考的极端点 不妨将数据直接存放到用户的设备上 这就是 P2P 的思路
 
 ### P2P
 
-- P2P（Peer-to-Peer）是一种去中心化的网络结构
-- BitTorrent
-  - Roles
-    - Tracker：用于记录哪些 peer 有文件的哪些部分
-    - Seeder：拥有完整数据的 peer
-    - Peer：下载数据的 peer 下载完后会变成 seeder
-  - Steps
-    - 发布一个 torrent 文件到服务器上 里面包含了 tracker 的 url、文件名、文件大小等信息
-    - tracker 会记录一组 peer 的信息
-    - seeder post 一个.torrent 文件的 url 到 tracker 上
-    - peer 通过 tracker 获取到 其他 peer 的信息
-    - peer 通过 peer 之间的连接来下载文件
-  - Protocol
-    - Random for first one
-    - Rarest for the rest
-    - Parellel for the last
-  - DHT（Distributed Hash Table）
-    - Chord Protocol
-      - IDs
-        - keyId=SHA-1(key)
-        - nodeId=SHA-1(IP)
-        - keyId 和 nodeId 在同一个 ID 空间
-      - 通过一致性哈希来实现
-        - ID 空间是一个环
-        - 每个节点负责一个区间为`(predecessor,successor]`的区间 即上一个节点到自己的 ID 区间
-        - 比如这个节点的 ID 是 5 下一个节点的 ID 是 10 那么节点 10 负责的区间就是 `(5,10]`
-        - 可以通过一直询问 successor 来找到一个 key 的位置
-      - 通过 finger table 来实现快速查找
-        - 记录 1/2 1/4 1/8...的位置
-        - 不断二分查找
-        - 如果节点崩溃 根据 finger table 找下一个节点 可能会导致错过正确的节点 所以需要顺序遍历 successor list（每个节点的下 r 个节点）
-      - 加入新节点只需要向其 successor 查询一下 并更新自己的 finger table 并不需要修改其他节点的 finger table 因为不会影响负载
+- P2P（Peer-to-Peer）是一种去中心化的网络结构 通过将数据分布到每个用户的设备上来提高访问速度
+
+#### BitTorrent
+
+- Roles
+  - Tracker：用于记录哪些 peer 有文件的哪些部分 通常是一个中心化的服务器
+  - Seeder：拥有完整数据的 peer
+  - Peer：下载数据的 peer 下载完后会变成 seeder 通常是一个普通的用户设备
+- Steps
+  - 发布一个 .torrent 文件到服务器上 里面包含了 tracker 的 url、文件名、文件大小、文件的 SHA-1 值等信息
+  - Tracker 会记录一组 peer 的信息 即它们包含了文件的哪些部分
+  - Seeder 会告知 tracker 自己有完整的文件
+  - Peer 通过 tracker 获取到一组 peer 并通过 peer 之间的连接来下载文件
+  - 总的来说 就是 peer 通过中心化的 tracker 获取到可以用于下载的 peer 列表 然后就可以去中心化的进行下载了
+- Protocol
+  - Random for first one（随机选择第一个数据块）
+  - Rarest for the rest（选择 peer 最少的数据块）
+  - Parellel for the last（并行下载最后一个数据块 只要有一个完成就成功）
+
+#### DHT（Distributed Hash Table）
+
+- BitTorrent 仍存在中心化的 tracker 为了去中心化 可以使用 DHT 来分布存储文件的元数据
+- 简单来讲 DHT 的 key 是文件的 SHA-1 值 value 是存储了该文件的 peer 节点信息　这样当需要下载某一个文件时就可以通过 DHT 来找到对应的 peer 省去了 tracker
+- Chord Protocol（一种 DHT 的实现）
+  - IDs
+    - keyId=SHA-1(key)
+    - nodeId=SHA-1(IP)
+    - keyId 和 nodeId 在同一个 ID 空间
+  - 通过一致性哈希来实现分布式存储
+    - ID 空间是一个环
+    - 每个节点负责一个区间为`(predecessor,successor]`的区间 换句话说 一个 key 会存储在 ID 空间中最近的后继节点上
+    - 比如这个节点的 ID 是 5 下一个节点的 ID 是 10 那么节点 10 负责存储的 key 就是 `(5,10]`
+    - 此时已经可以通过遍历每个节点来找到大于 keyId 的第一个节点 但是太慢
+  - 通过 Finger Table 来实现 O(logN)的查找
+    - 记录离当前节点 1/2 1/4 1/8...的位置 然后进行类似二分的跳跃
+    - 如果节点挂掉 finger table 可能会导致错过新存放了数据的节点
+    - 结合两者即可解决 节点记录 successor list（每个节点的下 r 个节点）当发现跳跃到的节点挂掉时就可以遍历 successor list 来找到正确的节点 其中网络越稳定 r 越小
+  - Join 新节点
+    - 只需要向其 successor 查询一下 并更新自己的 finger table 并不需要修改其他节点的 finger table 因为不会影响实际的查询负载
+  - 当节点比较少时 可能会存在负载不均衡的问题
+    - Virtual Nodes：将虚拟节点均匀分布在 ID 环上
+    - 一个物理设备可以映射到多个虚拟节点 即负责多个区间的 key 存储
+    - 虚拟节点的数量越多 负载越均衡
+- 可以看到从 C-S 到 CDN 再到 P2P 文件的共享方式越来越去中心化
 
 ## LEC 22: Distributed Computing: Intro
 
-- 人工智能的发展导致需要大量的计算资源 也就引入了分布式计算
-- 一个神经网络层 W 是 m\*k 的矩阵 X 是 k\*B 的矩阵 B 为 batch size k 为输入维度 m 为输出维度 那么计算 W\*X 的时间复杂度为 (2k-1)\*m\*B
-- backward path（反向传播）需要计算 dW 和 dX 时间复杂度为(2m-1)\*k\*B 和(2B-1)\*k\*m 都可以约为 2\*参数数量\*Batch Size 总的时间复杂度为 6\*参数数量\*Batch Size
-- 对于 GPT 来说 有 1.76trillion 个参数
+- 人工智能的发展导致需要大量的计算资源 也就必须得扩展为分布式计算
+- AI 训练计算所需要的性能是非常好计算的
+  - 一个神经网络层 W 是 m\*k 的矩阵 X 是 k\*B 的矩阵 B 为 batch size k 为输入维度 m 为输出维度 那么计算 W\*X 的时间复杂度为 (2k-1)\*m\*B
+  - backward path（反向传播）需要计算 dW 和 dX 时间复杂度为(2m-1)\*k\*B 和(2B-1)\*k\*m 都可以约为 2\*参数数量\*Batch Size
+  - 最终的结论就是 AI 模型训练总的时间复杂度为 6\*参数数量\*Batch Size
+  - 对于 GPT 来说 有 1.76trillion 个参数 一张 A100 显卡的性能是 19.5TFLOPS 那么训练一个 GPT 需要 30s 进行一次迭代 非常的耗时
+- 我们最终的目的是使用足够的算力进行分布式训练 接下来将先从单个计算设备开始讲起
 
-### History
+### Computing Device
+
+- 单个设备提升算力的根本就是并行
 
 #### CPU
 
-- 单核 CPU 系统 算力上限取决于 Clock Rate 一个时钟周期最多做一次指令 （当然也有使用 pipeline 和超标量的方法来提高算力）
-- 多核 CPU 系统 算力上限取决于核心数 然而和分布式类似 因此最复杂的还是 cache 中的 coherence 问题
-- SIMD（Single Instruction Multiple Data）：一条指令处理多个数据 也就是只增加 ALU（算术单元）的数量 可以用于向量和矩阵运算 然而需要新的指令集（比如 Intel 的 AVX）增加了代码的复杂度
-  - 然而性能增益也不可能达到理论的倍增 因为指令可能有依赖
-  - 另外访存的带宽也会影响性能 Time= Latency + Payload / bandwidth 有时候访存的时延会成为瓶颈
-  - Roofline Model：刻画算力与带宽的关系图 y 轴是算力 单位是 GFLOP/s 即每秒多少次浮点运算 x 轴是带宽 单位是 Flop/Byte 即读取一个字节数据可以进行多少次运算 于是斜率就是 Byte/s 即应用对于带宽的需求 在斜线下方的应用瓶颈是带宽 在斜线上方的应用瓶颈是算力
+- 单核 CPU 系统 算力上限取决于 Clock Rate 一个时钟周期最多做一次指令 （当然也有使用 pipeline 和超标量的方法来提高单核的算力）然而硬件的主频基本上因为散热问题已经到了极限
+- 多核 CPU 系统 算力上限取决于核心数 然而和分布式类似 最恶心的还是 cache 中的 coherence 问题
+- 另一种类似多核的方法是增加每个核的 ALU 数量 即 SIMD（Single Instruction Multiple Data）的思想 一条指令处理多个数据
+  - 需要新的指令集（比如 Intel 的 AVX）增加了代码的复杂度
+  - 性能增益不可能达到理论的倍增 因为指令可能有依赖
+  - 有时候访存也会成为性能瓶颈 访存的时间 = Latency + Payload / Bandwidth
+  - Roofline Model：刻画算力与带宽的关系图 y 轴是算力 单位是 GFLOP/s 即每秒多少次浮点运算 x 轴是应用利用内存的效率 单位是 Flop/Byte 即读取一个字节数据可以进行多少次运算 于是斜率就是应用对于带宽的需求 单位为 Byte/s 于是设备在图中表示为两条线 一条代表算力的水平线与一条代表带宽的斜线 应用的 OI（Operational Intensity）所落在哪条线 就说明哪个因素是瓶颈
 
 #### GPU
 
 - 也是两种方式提升算力：增加核心数和 SIMD
-- GPU 的 ALU 数量远远多于 CPU 因为没有 cache coherence
+- GPU 的 ALU 数量远远多于 CPU 因为 GPU 没有 cache coherence
 - SIMD 难以实现分支条件 但是可以通过 mask 来实现 也就是执行所有分支 但是写回的数据会用条件的 mask 来选择 不过还是会造成很多无用的计算 而且编程变得很复杂
-- 于是出现了 SIMT（Single Instruction Multiple Threads）：没听懂 （说是超纲了） 应该就是相当于用户指定某一个线程执行某一个任务
+- 于是 NVIDIA 实现了 SIMT（Single Instruction Multiple Threads）：（没听懂 说是超纲了）应该就是相当于用户指定某一个线程执行某一个任务 比如指定第 i 个线程执行第 i 位的相加
+
+#### TPU
+
 - Tensor Core：专门用于矩阵运算的核心 替换掉了原来的 ALU 用于加速矩阵运算
 - TPUs（Tensor Processing Units）：谷歌的专门用于矩阵运算的芯片
 
 #### Summary
 
 - 单个设备的算力由于种种限制没法无限提高（比如主频是因为散热问题 多核是因为芯片面积问题等）连老黄的显卡的提升也只是因为使用了 tensor core 或是增加了核心数
-- 于是就需要分布式计算
+- 于是就需要分布式计算来提高算力 大部分情况下使用一个开源的分布式计算框架足以 接下来我们介绍一个经典的分布式计算框架：MapReduce
 
 ## LEC 23: Distributed Computing: Batch Processing
 
 - 分布式计算带来了更高的算力 但是也带来了更多问题 比如编程复杂性、网络通信的延迟等
-- Batch Processing：批处理 比如统计很多网页中最受欢迎的网页
-- 基本思想是分治 比如求 TopK 就可以分成求每个节点的 TopK 然后再合并起来求全局的 TopK
+- 今天我们介绍一个经典的批处理的分布式计算框架：MapReduce
+
+### Batch Processing
+
+- 批处理的一个例子是统计很多网页中最受欢迎的网页 其基本思路是分治 比如求所有的 TopK 就可以分成求每个节点的 TopK 然后再合并起来求全局的 TopK
+- 以往的批处理基本上都是对于具体的任务进行实现的 这样的代码即难以维护也难以复用 我们需要设计一个通用的批处理框架 但是这往往面临许多挑战
 - Challenges for Programmers
-  - Sending data to/from nodes
-    - RPC 不够高效
-  - Coordinating among nodes
-  - Recovering from failures
-    - 规模效应：规模越大 越有可能出现 failure 比如 GPU 风扇积尘
-    - 有两种方式来处理 failure
-      - 重做 确保每一个操作都没有 side effect（时间上的冗余）
-      - 设计一个可靠的系统 比如 GFS（空间上的冗余）
-    - MapReduce 的 fault tolerance
-      - 通过心跳来检测节点是否存活
-      - 通过重置初始状态并 re-execute 来进行 recovery
-      - master 的 failure 通过 checkpoint 来恢复 即 master 的状态会被持久化到 GFS 中 每隔一段时间进行写入
-      - MapReduce 可能会因为第三方库而遇到各种 bug 其处理方式是简单的 skip
-  - Optimizing for locality
-    - 希望数据可以缓存在本地
-    - master 会把 map 任务分配给存储了这一部分数据的节点 保证数据在本地
-  - Partitioning data for parallelism
+  1. Sending data to/from nodes
+     - RPC 不够高效
+  2. Coordinating among nodes
+     - 需要协调各个节点之间的同步
+  3. Recovering from failures
+     - 规模效应：规模越大 越有可能出现 failure 比如 GPU 风扇积尘
+  4. Optimizing for locality
+     - 希望数据可以缓存在本地
+  5. Partitioning data for parallelism
+     - 为了并行处理 需要将数据分成多个部分
 
 ### MapReduce
 
-- MapReduce 是 Google 提出的一种分布式计算框架
-- Interface
-  - Map：输入一组值 进行某种操作 输出一组键值对 相当于将输出分到了不同的桶中 便于 reduce 可以并行处理
-  - Reduce：输入一组键值对 进行某种操作 输出一个值 一个 reducer 处理一个键的所有值
-- 用户只需要考虑如何将操作变为 Map 和 Reduce 即可 其他的由 MapReduce 框架来处理
-- 工作流程：mapper 处理完数据产生一堆键值对 传输给多个 reducer 进行处理 其中
-
-  1. 把输入数据分成 多个 shards 一般是 64MB 一个（因为是 GFS 的块大小）
-  2. master 启动多个 mapper（通过 RPC fork）
-  3. mapper 读取数据进行处理 产生键值对（先放内存 异步落盘）
-  4. 键值对会根据 shard 放到同一个 immediate file 中 方便顺序读取
-  5. 将 intermediate data 排序 确保相同的 key 在同一个文件中 reducer 就可以读取到所有的 value 这个排序可以使用归并 即 mapper 产生的数据已经是有序的 之后再 merge 一下即可
-  6. reducer 读取数据进行处理 产生结果
+- MapReduce 是 Google 提出的一种分布式计算框架 其对于上述 5 个挑战都有很好的解决方案 使得用户可以专注于任务 考虑 map 与 reduce 的实现 而无需考虑其它细节
+- How MapReduce Solve Challenges
+  1. Sending data to/from nodes
+     - 数据只需要在 map 和 reduce 之间传输 并且通过 shuffle & sort 来减少数据传输量
+  2. Coordinating among nodes
+     - 先调度 map 任务 然后调度 reduce 任务即可
+  3. Recovering from failures
+     - MapReduce 有 2 个特性使得容错非常简单
+       - 任务是幂等的 因为 map 与 reduce 并不会对外部状态进行修改 所以可以通过 re-execute 来进行恢复（时间上的冗余）
+       - 基于一个可靠的文件系统（GFS）其具有许多 replicas 从而可以保证数据的可靠性（空间上的冗余）
+     - MapReduce's Fault Tolerance
+       - Worker failure
+         - 通过心跳来检测节点是否存活
+         - 一旦某个节点挂掉 将其原本的任务重置为初始状态 并分配给其他节点执行
+       - Master failure
+         - master 不再能通过重做来恢复 因为一个完整的大任务可能需要很长时间 不可以让之前的进度全部丢失
+         - 因此可以通过 CKPT 来容错 即 master 的状态（比如每个 worker 的状态 中间结果的位置等）会被定期持久化到 GFS 中 一旦挂掉 通过读取 GFS 的 CKPT 来恢复 不再需要重做所有计算
+       - MapReduce 有时候会因为调用第三方库而遇到 bug 其处理方式是简单的 skip 因为第三方的 bug 不是 MapReduce 的问题 并且牺牲了一点正确性来保证了容错性是可以接受的
+  4. Optimizing for locality
+     - 有两部分数据传输 一是 mapper 从 GFS 中读取数据 二是 reducer 从 intermediate file 中读取数据 后者一般比较小 不是性能瓶颈
+     - 为了解决前者 Master 会把 map 任务分配给存储了这一部分数据的节点 保证数据在节点本地 无需网络开销
+  5. Partitioning data for parallelism
+     - map 可以天然并行 reduce 则需要根据 key 来分组实现并行
+- Execution Flow（隔壁 AEA 已经写的很清楚了）
+  1. 把输入的数据文件分成多个 shards 一般是 64MB（因为是 GFS 的 block size）
+  2. 集群启动一个 Master 与多个 Worker（通过 RPC fork）Master 会把 map 或 reduce 任务分配给空闲的 Worker 其中一个 map 负责一个 shard 一个 reduce 负责一个 intermediate file
+  3. Mapper 读取 shard 并进行处理 产生中间结果键值对（先放内存 异步落盘）
+  4. 中间结果会缓存在内存中 并异步落盘 然后它们会被划分为 R 个分区 默认使用取模哈希来划分
+  5. 将 intermediate data 排序 确保相同的 key 在同一个文件中 Reducer 就可以尽可能少读取文件 排序使用归并来加速 即 Mapper 在产生 intermediate data 的分区时就会进行排序 只需要进行归并即可
+  6. Reducer 读取中间数据进行处理 产生结果
   7. 返回结果给用户
-
-- 应用
-
-  - url 计数
+- Refinement：redunant execution
+  - 由于规模效应 在集群中总是有一部分的节点性能比其他差 拖累了整体性能 原因各种各样 甚至包括风扇积灰
+  - 解决方法是冗余 即同一个任务会被分配给多个节点执行 只要有一个节点执行成功即可 同时这也带来了更多的资源消耗
+- 一些应用
+  - 分布式的 grep
+  - URL 计数
   - 倒排索引的构建
-
+  - Reverse Web-Link Graph
 - Summary
-  - 易扩展
+  - 容易扩展
+  - 容错性好
+  - 对于适合 MapReduce 的任务性能很好
+  - 不适合实时处理场景
+  - 编程抽象是否有限 可以看到 MapReduce 对于比较复杂的并行化任务并不是很友好 因此下节课我们会介绍 Computation Graph
 
 ## LEC 24: Distributed Computing: Distributed Computing Frameworks
 
 ### Computation Graph
 
-- 一个计算图是由节点和边组成的 一个节点代表一个数据或计算 一个边代表依赖关系
-- 复杂的并发的任务可以被表示为一个计算图 几乎可以表示所有分布式计算任务
-- DAG 的容错比较好 因为可以通过依赖关系找到上一个有数据的节点 从而重新计算
-- Job Manager（即 master）会看哪个节点的依赖关系已经满足了 然后分配任务
-- 举例：神经网络
+- 计算图将计算抽象为 DAG 其中节点代表一个数据或计算 边代表交流通道
+- Why DAG？DAG 的容错比较好 一定可以通过依赖关系找到上一个有数据的节点 从而重新计算 如果有环则不能 另外 DAG 可以识别出哪些节点可以并行计算 即没有依赖关系的节点
+- Scheduling
+  - 与 MR 类似 Job Manager（即 Master）会看哪个节点的依赖关系已经满足了 然后分配这个节点的计算任务给空闲的 Worker
+  - 这些中间状态不用像 MR 一样需要写入 GFS 而是写入内存中的键值系统
+  - 任务的分配和 MR 一样 会尽量找到数据所在的节点
+  - 容错则仍然是通过重做来实现 不过需要递归的寻找上游节点的依赖关系
+- 举例：用计算图表示神经网络（没有 AI 基础听个吉尔）
   - 任意一层的计算可以表示为 x\*W->y 其中 x 是输入向量 W 是权重矩阵 y 是激活函数
-  - 可以根据计算图推出梯度的计算图
+  - 可以根据计算图推出梯度的计算图 通过链式法则
   - 将计算和硬件解耦 可以在不同的硬件上运行
 - Graph fusion：将多个节点合并成一个节点 减少通信开销
-- Parallelism（只考虑 sync 因为 async 基本没人用）
-  - Data Parallelism：将数据分成多个 batch 分别计算 比如累加梯度
-    - 关键操作被成为 all-reduce 比如累加操作中的 sum 操作 其开销决定了整个计算的性能
-    - 而在 all-reduce 中主要的开销是通信开销 一是减少通信量 二是尽可能减少并发通信
-    - 一种方法是 每个节点负责一部分的 all-reduce 整体的通信量是 O(P) 但是有 fan-in 的问题
-    - 另一种方法是顺序发送 等待上一个节点发送完后再发送 通信量不变
-    - 还可以进一步进行 sharding 一个节点只负责某一个参数的 reduce 也可以减少通信量 一般需要使用 rpc 进行同步 保证不同节点发送数据在不同时间
-    - 一种更好的方法是使用 ring allreduce 每个节点只需要和相邻的节点通信 最终数据会汇总到某一个节点上 最终再进行广播 不过这个方法会导致每个参数的 reduce 顺序不一样 如果不满足交换律则会导致结果不一样（比如浮点数的加法）最终的通信量是 O(N)
-    - Tree Allreduce：二分 reduce 的方法 即每个节点和两个子节点 reduce 最终汇总到根节点上 最终再进行广播 然而负载并不均衡 于是使用 Double Binary Tree Allreduce 会将二叉树进行翻转 保证负载均衡
-  - Model Parallelism：将模型分成多个部分分别计算
-    - 把模型的不同层或者每一层的不同参数分配到不同的节点上（水平或垂直切分）
-    - 按照不同层划分也叫 Pipeline Parallelism 因为节点之间有依赖关系 即上一层计算完了才能计算下一层
-    - 通过把 batch 进一步划分为多个 micro-batch 可以减少 pipeline 的 bubble（空闲时间）理想情况下 bubble 由 p-1 变为(p-1)/m 其中 p 为 partition 的个数 m 为 micro-batch 的数量 即增加 m 或者减少 p 都可以减少 bubble 然而增加 m 会导致 batch 太小 GPU 性能下降 此时只能增大 batch size 然而这会影响模型的收敛 p 也不能无限制减少 因为我们切分模型就是为了减少单个节点的参数量
-    - 于是需要 Tensor Parallelism 将参数矩阵切分为多个子矩阵 分配给不同的节点 其通信量比 Pipeline Parallelism 更大
-    - Summary
-      - Pipeline Parallelism：
-      - Tensor Parallelism：
-  - 实际情况会使用 3D Parallelism 即同时使用上述三种方法
 
-## LEC 25: Distributed Computing: Distributed Training
+## LEC 25 & LEC 26: Distributed Computing: Distributed Training
 
-## LEC 26: Distributed Computing: Distributed Training 2
+- 接下来我们终于到达了目的地：分布式训练 下面介绍一下如何使用计算图来进行分布式训练
+- 以所有 AI 模型训练都会用到的梯度下降法为例 可以看到求权重的下一次迭代可以表示为如下的计算图 其中 x 是输入 y 是 label w 是当前权重 最终计算出 dw 来更新权重
+- 为了分布式训练 我们需要考虑如何实现这个计算的并行化 接下来介绍几种常用的并行化方法
+
+### Parallelism
+
+- 业界实际场景会使用 3D Parallelism 即同时使用下面三种并行化方法
+
+#### Data Parallelism
+
+- 即将数据的 batch 划分为更小的部分 分别计算 最后再汇总 比如上图的累加操作
+- 第一个问题是 同步的方法导致必须等待所有节点计算完毕才能进行下一次迭代 也就会有某些节点拖累整体性能 这个只能通过异步的方法来解决
+- 第二个问题是 被称为 all-reduce 的汇总操作 往往需要巨大的通信与计算开销 比如累加操作中的 sum 操作 其开销决定了整个计算的性能
+- 在 all-reduce 中主要的开销是通信开销而并非计算开销 减少通信开销的方法包括减少通信量与减少并发通信 下面是业界常用的几种方法
+  - Parameter Server
+    - PS 负责接受所有节点的参数并进行 reduce 然后再广播回所有节点
+    - 假设 N 是节点的数量 P 是参数的数量 那么 PS 需要 1 轮通信 节点的 fan-in 是 O(N) 通信量是 O(N\*P)
+    - 这意味着随着节点的拓展通信量会线性增加 并且需要应对高并发问题
+  - Co-located & Sharded PS
+    - 进行 sharding 一个节点只负责一部分参数的 reduce 仍然只需要 1 轮 每个节点的通信量变为 O(P) 与节点数量无关
+    - high fan-in 问题：每个节点仍需要收到 O(N) 个节点的请求 还是存在高并发问题
+  - Decentralized Allreduce
+    - 所有节点串行的发送参数 减少了并发请求 通信量仍然是 O(N \* P) 需要的轮数是 O(N^2)
+    - 如果 1 给 0 发的同时 2 给 1 发 3 给 2 发 则可以减少轮数为 O(N)
+  - Ring Allreduce
+    - 节点的通信形成一个环 即 0->1->2->3 最终节点 3 进行 reduce 并广播
+    - 结合 sharding 后 看起来就像是每一轮每个节点都会接受上一个节点的参数 并发送参数给下一个节点 最终在 N 轮内结束 注意参数最远只需要走 N-1 步 所以所有参数肯定可以到达目的地
+    - 同理 广播也可以通过一轮环路通信来实现
+    - 每个节点的通信量是 O(P) 通信轮数是 O(2\*N) 但是每个节点只需要同时处理两个节点的请求 这就是牺牲了网络延迟来换取了低并发
+    - 这个方法会导致每个参数的 reduce 顺序不一样 如果计算不满足交换律则会导致结果不一样（比如浮点数的加法）
+  - Tree Allreduce
+    - 不断二分 reduce 的方法 即每个节点负责两个子节点的 reduce 最终汇总到根节点上 最终再进行广播
+    - 每个节点的通信量是 O(P) 通信轮数是 O(logN) fan-in 为 3（父节点和两个子节点）
+    - 然而负载并不均衡（叶与根 fan-in 更少）于是使用 Double Binary Tree Allreduce 将二叉树进行翻转 保证负载均衡
+
+#### Model Parallelism
+
+- 可以看到 Data Parallelism 要求一个节点必须存储所有的参数 然而目前模型的参数量太大 往往一个节点存不下
+- 因此考虑把模型的不同层或者每一层的不同参数分配到不同的节点上（水平或垂直切分）也就是 Pipeline Parallelism 与 Tensor Parallelism
+- Pipeline Parallelism
+  - 即把模型的每一层放到不同节点 之所以称为 Pipeline 是因为节点之间有依赖关系 上一层计算完了才能计算下一层
+  - Pipeline 最大的性能问题是 bubble 即空闲时间
+    - 通过把 batch 进一步划分为多个 micro-batch 可以减少 pipeline 的 bubble（空闲时间）因为节点可以更早的获取上一层的结果
+    - 理想情况下 bubble size 是 p-1 而减少的倍数是 (p-1)/m 其中 p 为 partition 的个数 m 为 micro-batch 的数量
+    - 要想减少 bubble 需要增加 m 或者减少 p
+      - 增加 m 会导致 batch 太小 GPU 性能下降
+      - 那么只能相对的增大 batch size 然而这会影响模型的收敛
+      - p 也不能无限制减少 因为我们切分模型就是为了减少单个节点的参数量 模型的参数量也就限制了 p 的最小值
+- Tensor Parallelism
+  - 由于参数量限制了 p 我们可以考虑把一层进一步划分为多个子矩阵 分配给不同的节点 这样多个节点就可以存储一层 p 也就可以进一步减少了
+  - 原理很简单 即矩阵乘法可以分解为多个子矩阵的乘法
+  - 由于在计算了一整个矩阵乘法后 需要汇总成完整的矩阵 因此会有额外的网络通信开销 导致其通信量比 Pipeline Parallelism 更大
+- Summary
+  - Pipeline Parallelism
+    - 网络通信少
+    - 有 Bubble
+  - Tensor Parallelism
+    - 支持参数多的大模型
+    - 网络通信多
 
 ## LEC 27: Security: Intro
 
-- 为什么不用 fault tolerance 来保证安全性？
-
+- Security 是一个 negative goal 也就是要保证某些事情不会发生
+- 为什么不直接用 fault tolerance 来保证安全性？
   - fault 的影响可能是非常巨大的
   - fault 一般是随机的 而 attack 是有关联的
-
 - 2 Steps to Security
-
-  - Goals（Policy）：保护什么
+  - Policy（Goals）：保护什么
     - Confidentiality：限制谁可以读数据
     - Integrity：限制谁可以修改数据
     - Availability：保证服务一直可用
   - Threat Model（Assumptions）：假设什么
     - 威胁模型是对于攻击者的一种假设 包括了攻击者的能力和目标
+    - 比如 攻击者可以控制一些节点 但是不能控制所有节点
 
-- Authentication
+### Authentication: Password
 
+- 可以基于不同的因素进行认证
   - knowledge-based：密码 安全问题
   - have-based：门卡 钥匙
   - are-based：指纹 人脸识别
 
-- Password
+#### Password
 
-  - Timing Attack：通过密码验证的时间来判断密码是否正确 比如某些密码的匹配会导致内存换页 从而导致时间变长 于是可以确定每一个字符是否正确 解决方法是比对密码的 hash 而不是密码本身
-  - Rainbow Table：通过预先计算出所有可能的密码的 hash 来进行破解 比如最常用的 30 个密码 解决方法是加盐 即在密码后面加上一串随机字符串再进行 hash 虽然不能防止攻击 但是会大大增加攻击的成本
-  - Strawman：比如对于 Session 是<username,expire_time>的哈希值 则用户"BEN"与"BEN2"可能会有相同的哈希值 因此不能简单拼接字符串
-  - Phishing Attack：通过伪装的网站来获取用户的密码 比如 baidu.com 和 baidv.com
-  - Techs
+- Goals
+  - 认证用户
+  - 攻击者必须靠 guessing 来破解密码 是非常 expensive 的
+- Timing Attack：通过密码验证的时间来判断密码匹配了多少位 比如通过内存换页 从而导致某些密码的时延变长 于是可以确定每一个字符是否正确 解决方法是比对密码的 hash 而不是密码本身
+- Rainbow Table：攻击者构造一张表 存放了最常见的密码与其哈希值 一旦获取到了数据库里存储的哈希值 就可以通过在彩虹表里碰撞来获取密码
+- Salting：彩虹表的解决方法是加盐 即在密码后面加上一串随机字符串再进行哈希 此时攻击者若还想构造彩虹表就需要对每一种可能的<password,salt>都进行哈希 成本成倍增加
+- Strawman：现在大部分网站会使用 cookie 一般是对于<server_key, username, expiration>的哈希值 然而这样的键值对具有二义性 比如名为"BEN"的用户获取一个在"22-12-2020"过期的 cookie 与名为"BEN2" 在"2-12-2020"过期的 cookie 是一样的 解决方法是加入 split 符 比如 `BEN/22-12-2020`
+- Phishing Attack：通过伪装的网站来获取用户的密码 比如 baidu.com 和 baidv.com
+- Key Problem： 一旦攻击者持有密码 就可以成功登录 有一些解决的方法如下
+  1. 本地计算哈希 每次 server 发送一个随机值给 client client 计算<password,random>的哈希值发送给 server 缺陷是 server 必须保存明文
+  2. 反向验证 让 server 发送给 client 密码 确保 server 是安全的
+  3. 要求在线登录 服务器可以发现攻击者的可疑行为 比如暴力破解
+  4. Specific pwd：为不同的网站使用不同的密码
+  5. One-time pwd：每次登录使用不同的密码
+     - 比如服务器保存密码计算 100 次的哈希值 第一次登录时客户端发送 H99 服务器再哈希一次进行对比 然后保存 H99 第二次登录发生 H98 以此类推 攻击者很难从 H99 推出 H98
+     - 或者每次计算<pwd,time>的哈希值 使得攻击者无法重放 这也是安全令的原理 它会离线每隔 10s 根据时间生成新的随机值 然后计算<password,random>的哈希值
+  6. 绑定 auth 与 request：对于关键操作 即使已经登录 也需要再次验证密码 比如支付宝的支付
+  7. FIDO：把指纹与密码绑定在一起 验证指纹通过后 程序将使用私钥对服务器发来的数据进行签名 然后返回 服务器发送的数据是由 uid 与公钥（即密码）加密的
+- 如何修改密码？
+  - 一般会发送一个 url 给用户 这个 url 包含了一个由随机数生成的 token 用于验证用户的身份
+  - 事实上这个随机数是由服务器的一些状态生成的 比如键盘鼠标的输入 网络包的状态等
 
-    1. 本地计算哈希 每次 server 发送一个随机值给 client client 计算<password,random>的哈希值发送给 server 缺陷是必须保存明文
-    2. 反向验证 让 server 发送给 client 密码 确保 server 是安全的
-    3. 要求在线登录 服务器可以发现攻击者的可疑行为
-    4. specific pwd：不同的网站使用不同的密码
-    5. n-time pwd：服务器保存密码计算 100 次的哈希值 第一次登录时客户端发送 H99 服务器再哈希一次进行对比 然后保存 H99 第二次登录发生 H98 以此类推
+### Security Principles
 
-       另外 安全令也是一种方法 它会离线每隔 10s 计算新的哈希值
-
-    6. 绑定 auth 与 request：在操作时 即使已经登录 也需要再次验证密码
-    7. FIDO：把指纹与密码绑定在一起 验证指纹通过后 程序将使用私钥对服务器发来的数据进行签名 然后返回 服务器发送的数据是由 uid 与公钥（即密码）加密的
-
-  - Bootstrapping
-    - 如何修改密码？一般会发送一个 url 给用户 这个 url 包含了一个由随机数生成的 token 用于验证用户的身份 事实上服务器的随机数是由一些状态生成的 比如键盘鼠标的输入 网络包的状态等
-
-- Principles
-
-  - Least Privilege：只给予最小的权限
-  - Least Trust：不要相信任何人
+- Least Privilege：只给予最小的权限
+- Least Trust：不要相信任何人
+- Cost of Security：安全性是有代价的
 
 ## LEC 28: Security: ROP and CFI
 
 ### ROP（Return Oriented Programming）
 
-- 通过向栈中注入一些指令来实现攻击
+- 最经典的 ROP 即通过 buffer 的溢出向栈中注入代码 导致 retaddr 被覆写 从而修改了程序的控制流
 - DEP（Data Execution Prevention）：禁止执行数据段的代码
-- Code Reuse Attack：通过将代码段中的指令串联起来来实现攻击
-- ROP Chain：通过将代码段中的指令串联起来来实现攻击
+- Code Reuse Attack：通过将代码段中带有 ret 的指令串联起来来实现攻击
 - Defenses
-  - 
-  - ASLR（Address Space Layout Randomization）：随机化内存地址
-  - Canary：在栈中插入一些特殊的值 一旦被修改则说明栈被破坏了
+  - 隐藏二进制文件 使得攻击者无法读取汇编代码
+  - ASLR（Address Space Layout Randomization）：随机化内存地址 这是因为现在的代码都是地址无关的
+  - Canary：在栈中的 retaddr 前插入一些特殊的值 一旦被修改则说明栈被破坏了
 
 ### CFI（Control Flow Integrity）
 
-- 通过检查程序的控制流来防止攻击
+- 通过检查程序的控制流来防止 ROP 攻击
 - Branch Types
   - Direct Branch：直接跳转
-    - CALL：调用函数
-    - JUMP：跳转
+    - DIRECT CALL：调用函数
+    - DIRECT JUMP：跳转
   - Indirect Branch：间接跳转
     - RET：返回
-    - JMP RAX：跳转到 RAX 寄存器中的地址
-    - CALL RAX：调用 RAX 寄存器中的地址
+    - INDIRECT JUMP：跳转到 RAX 寄存器中的地址
+    - INDIRECT CALL：调用 RAX 寄存器中的地址
+  - 事实情况是 运行中的代码大部分都是间接跳转 并且跳转的目标地址大部分都是确定的 绝大部分只有不超过 2 个目标
+- Instrumentation
+  - 在原代码的 jmp 指令前加入一段检查代码 其会检查 jmp 的目标地址是否是某一个硬编码的数据（比如 12345678） 如果不是则不跳转
+  - 在目标地址的代码前加入这个硬编码的数据 确保控制流会到这
+  - 如果第三方库的代码已经加入 data 但是用户的 app 没有加入检查代码 会导致把这段数据当作代码执行
+  - 解决方法是使用 prefetch 指令 这个指令遇到无法执行的代码会直接跳过 相当于一个 nop
+- CFI Precision
+  - 如果 A 调用 C B 调用 C 或 D 那么要求 C 的 data 与 D 的 data 必须一样 这就导致 A 是可以合法调用 D 的
+  - 解决方法是修改 B 的汇编代码 把原本的`CALL %eax` 变为`CALL C_ADDR`与`CALL D_ADDR`的直接跳转 缺点是增加了代码大小
+  - 同理 A 与 B 都调用 C 也会导致 C 的 ret 可以返回到 A 或 B 想要解决就得设法使得每一个目标地址的 data 是唯一的 这非常困难 目前的 CFI 是不考虑这些细粒度问题的
 
-- 通过加入cmp指令来检查控制流是否正确 不兼容其他库 可以用prefetch解决
 ## LEC 29: Security: Control Flow Integrity & Secure Data Flow
 
+### Blind ROP
 
+- Goal & Assumption
+  - 攻击者通过 http 请求让服务器变为 bash
+  - 攻击者只知道服务器代码存在一个 overflow 但是不知道具体的二进制代码
+  - 攻击者发送 http 请求可能得到三个结果
+    - 正常返回
+    - 连接关闭 因为栈溢出了
+    - 阻塞 未收到任何返回
+- Stack Reading
+  - 首先攻击者可以逐步增加 payload 的大小 从而找到 buffer 的大小
+  - 然后攻击者逐步改变 retaddr 的某一位 如果连接关闭说明代码跑飞了 如果返回正常说明这一位是正确的 从而得到了 retaddr 的值
+  - 注意 nginx 处理 http 请求的进程是通过 fork 产生的 因此其地址是与父进程一样的 因此父进程未崩溃的情况下 地址是不会变的
+  - 同理也是可以把 canary 的值猜出来的
+- Find Gadgets
+  - 现在略微修改 retaddr 的后几位 根据结果是关闭连接还是阻塞来分类 分为 crash 或是 stop gadget
+  - 然后加入两个 retaddr 第一个是需要试的地址 第二个则是已经找到的 crash 或 stop 地址 如果结果是 crash 或 stop 说明这个地址是一个可用的 ret gadget 如果都是 crash 则说明这个地址是 crash gadget
+- 接下来需要寻找 call write 与 pop ret 的代码段
+  - write(sock, buf, len) 意味着只要试出攻击者的 sock 就可以把二进制代码返回给攻击者 buf 只需要填为比 retaddr 小的一个地址即可
+  - pop ret 意味着攻击者把数据放到栈上就可以控制寄存器的值 从而提供给 write 函数作为参数
+  - 奇妙点在于 所有函数的结尾都会有一段 BROP gadget 会把所有的 callee 寄存器的值 pop 出来 并且从这段代码的中间某处开始执行 就会变成 pop rsi 与 rdi 的指令 于是任务变为找到 BROP gadget
+  - 现在在栈上构造这样一个结构 retaddr 是要尝试的地址 上面跟着 6 个 crash gadget 最顶上是一个 stop gadget 对于一般的代码 会直接 crash 然而对于 BROP gadget 会先 pop 出 6 个地址 然后再执行 stop gadget 因此如果这个地址的结果是 stop 那么其可能是一段 stop 或者是一段 BROP gadget
+  - 同理 把最顶上的 stop 改为 crash BROP gadget 的结果是 crash 这样就可以区分出 BROP 于 stop 了
+  - 接下来还剩下 pop rdx 与 call write 的代码段 注意到 call strcmp 与 call write 的位置不会相差太多 并且 call strcmp 会使得 rdx 中的值变为 string 的长度 只需要尝试出字符串的位置即可 并且因为 rdx 是 caller saved 的寄存器 所以 rdx 不会被 pop 掉
+  - 回忆 ICS 学习的 PLT 表 其结构特点是每 16 个 byte 就是一个 ret 于是通过尝试 ret gadget 是否按 16 byte 对齐就可以找到 PLT 表的地址
+  - 找到 PLT 表后 我们通过 strcmp 的特征来判断 注意我们已经可以控制前两个参数了 如果两个参数中有一个是 null 那么 strcmp 就会 crash 如果两个参数都不是 null 那么 strcmp 就不会 crash 于是我们可以通过这个特征来判断是否是 strcmp 函数
+  - 而 write 的特征就是会在响应中返回奇怪的字符串 注意需要通过多个连接来尝试 socket 的值
+- 最终可以把整个服务器的二进制代码返回给攻击者 也就可以找到 exec 函数 来执行 bash 命令
+
+### Data Flow Protection
+
+- 控制流正确并不能保证数据的安全性 比如代码如果写错了 也会导致安全问题
+- 我们不妨从另一个角度思考问题 即不要让数据被泄露 即跟踪数据的流向
+- 2 Usages
+  - 保护关键数据
+  - 避免可疑数据
+
+#### Taint Tracking
+
+- 通过染色机制跟踪关键数据的流向
+- Dynamic Taint Analysis
+  - 一个变量被创建时 会根据其是否是常量来决定是否被染色（taint）
+  - 给一个变量赋值时 采用 OR 操作符来决定是否被染色 比如 `a = b + c` 那么 a_taint = b_taint | c_taint
+  - 在调用 jmp 或 send 等操作时 不允许目标是被染色的
+  - 上述操作被称为初始化、传播、检查 其中初始化与检查是由用户决定的
+  - 通过检查 可以找到被泄露的数据 比如 GPS 数据被应用进行发送
+  - 有一个问题 如果代码采用死逻辑 比如：
+    ```c
+    if (a == 1) {
+      b = 1;
+    } else if (a == 2) {
+      b = 2;
+    } ...
+    ```
+    可以看出等价于 `b = a` 但是 b 却会被识别为非染色的
+
+#### Defending Malicious Input
+
+- 攻击者是如何找到 bug 的？
+  - 选择一个开源的代码库
+  - 找到需要攻击的模块
+  - 定位到 data input
+  - 跟踪 input data 的流向
+- An Example（FFmpeg）
+  - FFmpeg 是一个开源的视频处理库
+  - 我们选择 parse 函数来进行攻击 因为这个函数是比较容易出错的
+  - 还需要选择一个不常用的文件格式来进行攻击 因为用的越多的文件格式就越稳定
+  - 我们找到了.4xm 文件格式 并且定位到了 parse 函数中读取文件的地方 是`ByteIOContext *pb = s->pb;`这一行
+  - 后续找到了一处给 int 赋值为 unsigned int 的语句 导致了最终可以对内存进行任意位置的任意写入 也就可以进行攻击了
+- Taint Check
+  - 通过染色检查数据是否是危险数据
+  - 存在性能问题 开销接近 40x 对于大 IO 的程序比较好 因为会留出时间给 CPU 进行操作
 
 ## LEC 30: Privacy & Review
+
+### Secure Channel（建议最后重看）
+
+- 通过加密来保证通信的安全性
+- Encryption Properties
+  - encrypt：可逆 保证了机密性
+  - MAC：不可逆 保证了完整性 也就是比对哈希值
+- 密文被截获后可以进行重发攻击 于是需要加入时间戳或 nonce 来保证消息每次都不一样
+- 然而 A B 之间是对称的 因此 E 可以把消息发给 A 于是引入了非对称加密
+- 非对称加密是指两端使用不同的密钥进行加密
+- A 与 B 最开始的密钥交换可以通过 DH（Diffie-Hellman）算法来实现 见算法设计课本
+- 虽然 E 无法知道密钥 但是却可以作为中间人来进行攻击 于是引入了数字签名
+- RSA 是一种非对称加密算法 通过公钥加密 私钥解密 实现了数字签名 即 A 可以用自己的私钥对消息进行签名 B 可以用 A 的公钥来验证签名
+- 公钥由 CA（Certificate Authority）来签发 证书中包含了公钥与签发者的信息
+
+### Privacy
+
+#### OT（Oblivious Transfer）
+
+- Problem
+  - A 有两个消息 m0 与 m1
+  - B 希望获取 mx 的值 但是不希望 A 知道 x
+  - A 不能把两个消息都发给 B
+- 1-out-of-2 OT 的解决方法很简单
+  - A 使用两个公钥 K0 与 K1 并把它们发给 B
+  - B 选择一个随机数 r 如果选择 1 则使用 K1 加密 r 得到 c 返回给 A
+  - A 用 K0 与 K1 解密 c 得到 r0 与 r1 然后把 e0=r0 xor m0 e1=r1 xor m1 发给 B
+  - B 只需要用 r xor e1 就可以得到 m1
+
+#### DP（Differential Privacy）
+
+- Problem
+  - 一个公司可以发布一部分人的统计收入 但是不能泄露某一个人的收入
+  - 一旦有一个人通过`SUM(Salary) WHERE Name != "Ben"`进行查询 就得到了 Ben 的收入
+- Solution
+  - 通过加入噪声来保护数据 也即返回的是一个约值
+  - 比如实际上总收入是 450 返回的是~500 除去 Ben 的收入后 返回的还是~500
+
+#### Secret Sharing
+
+- 将密钥分成 n 份发给不同的人 只有当所有人都到齐时才能解密
+- 进一步的实现是 n 份密钥中只要 k 份到齐就可以解密 提高了容错性
+- Pros & Cons
+  - 优点：安全性高
+  - 缺点：通信开销大 因为密钥会大于 1/n
+
+#### HE（Homomorphic Encryption）
+
+- Problem
+  - A 想要在谷歌上搜索一个东西 但是不想让谷歌知道他搜索的是什么
+  - 于是 A 用自己的密钥对搜索的内容进行加密 然后发给谷歌
+  - 谷歌通过对于密文的搜索来返回结果 A 通过自己的密钥解密得到结果
+- 思路
+  - A 把数据加密为 CT 并把函数 f 发送给 B
+  - B 对 CT 进行 f 函数计算得到 CT' 其等价于对于 f(Data)的加密
+  - 于是 A 可以通过解密 CT'得到 f(Data)
+  - 换句话说 加密和 f 函数具有交换律
+- SWHE & FHE
+  - HE：如果一个操作 f 可以与加密操作交换 则称为 HE
+  - SWHE：只能进行有限次某些类型的操作 比如加法和乘法
+  - FHE：可以进行任意次任意类型的操作
+- TEE（Trusted Execution Environment）
+  - 内存是加密的 CPU 的 cache 是明文
+  - 保证了除非有人可以读取 CPU 的 cache 否则是安全的 实现了一部分的 HE
+  - 信任的人从云厂商变为了 CPU 厂商
+
+#### Process of bug report
+
+1. 找到一个 bug
+2. 报告给厂商
+3. 修复 bug
+4. 公开 bug 与修复的过程
+
+## 算法设计
+
+### CH0: Introduction
+
+- 大 O 符号：O(f(n)) 表示存在一个常数 c 使得对于足够大的 n 有 f(n) <= c\*g(n) 其中 g(n) 是一个函数
+- ![alt text](image.png)
+- ![alt text](image-1.png)
+- 斯特林数：n! = sqrt(2\*pi\*n)\*(n/e)^n ![alt text](image-2.png)
+
+### CH1
+
+- 加法是 O（n） 并且是最优的 n 是位数
+- 乘法是 O（n^2） 不是最优的
+- Quiz：二进制下一个数乘 2 的复杂度是多少？O（1） 因为只需要左移一位
+- 除法是 O（n^2） 不是最优的
+- 模运算
+  - 替代准则
+  - 结合律 交换律 分配律
+  - 可以将任何中间结果转换为同余的数
+  - 模加法：O（n）
+  - 模乘法：O（n^2）
+  - 模幂运算：O（n^3）
+  - 最大公因数算法
+    - Euclid's 规则：gcd(a,b) = gcd(b,a mod b)
+    - O（n^3）2n 次迭代 每次迭代一次除法
+  - 扩展欧几里得算法
+  - 模除法
+    - 模倒数：ax ≡ 1 mod N
+    - 模的除法定理
+    - 模除法是通过乘除数的模倒数来实现的
+- 素性测试
+  - 费马小定理
+  - 卡迈克尔数
+  - 非卡迈克尔数至少有一半的 a 是无法通过费马小定理的 因此可以以 1/2 的概率缩减
+  - 素数的随机生成
+    - 拉格朗日素数定理
+    - 平均在 O（n）时间内生成一个素数
+  - 蒙特卡洛算法
+  - Las Vegas 算法
+- 密码学
+  - 一次一密乱码本
+  - RSA 算法 安全的前提是大整数的因数分解是困难的
+
+### CH2：Divide and Conquer
+
+- 乘法的复杂度可以通过分治法降低到 O（n^log2 3）
+- 递推式
+  - 主定理
+- 归并排序
+  - O（nlogn）
+- 中位数
+  - 选择问题 快速选择算法
+    - 最差情况是 O（n^2） 理想情况是 O（n）
+    - 可以证明平均情况是 O（n）
+- 矩阵乘法
+  - Strassen 算法
+    - O（n^log2 7）
+    - 和乘法的划分一样 从 8 个乘法变成了 7 个
+- 快速傅里叶变换
+  - O（nlogn）
+  - 用于多项式乘法
+
+### CH3：Graph
+
+- 无向图的 dfs 也可以用于判断连通性
+- 有向图的 dfs 通过 dfs 树的回边来判断 DAG 并且可以通过 post(g)来给出拓扑排序
+- 强连通分量
+  - 有向图中 u -> v 与 v -> u 都存在路径 则称 u 与 v 连通 于是可以把图分解为强连通分量
+  - 强连通部件算法 O（n+m）
+
+### CH4：Path
+
+- BFS
+  - O（n+m）
+  - 无权图的最短路径
+- Dijkstra
+  - O（(V+E)logV）采用优先队列
+  - 有权图的最短路径
+- 负边图
+  - Bellman-Ford 算法 O（VE）
+  - 可以检测到负环
+- DAG
+  - O（n+m）
+  - 可以通过设边权为负来求最长路径
+- 2 个练习题 10.21 结尾
+
+### CH5：Greedy
+
+- 最小生成树
+  - Kruskal 算法
+    - 分割性质：X 是 MST 的一部分 那么对于任意可以将 X 划分到一边的割 其最小边是 MST 的一部分
+    - 证明 只需要反证一定可以找到更小的 MST
+    - 使用并查集来合并
+    - 复杂度 O（ElogE）主要是排序
+    - 证明没看懂
+  - Prim 算法
+    - 伪代码和 Dijkstra 一样 只不过每次选出的点是距离当前集合最近的点 而不是距离源点最近的点
+    - 复杂度 O（V^2）线性搜索 或 O（（V+E）logV）优先队列
+  - 随机 MST 贪心
+    - 1 我不是很懂 2 就是分割性质
+- Set Covering
+  - 通过贪心得到一个近似解
+- Coin Changing
+  - 1 5 10 25 100 贪心是最优解
+  - 如何证明？归纳法 有空可以看看
+
+### CH6：Dynamic Programming
+
+- 最长递增子序列
+  - 等价于 DAG 的最长路径
+  - 复杂度 O（n^2）
+- 编辑距离
+  - 复杂度 O（mn）
+  - 隐含 DAG
+- 背包问题
+  - 多副本的背包问题 O（nW）一维表 长度为 W 每次需要 n
+  - 单副本的背包问题 O（nW）二维表 长度为 n 宽度为 W
+- 最长公共子序列
+  - 复杂度 O（mn）
+- 最长公共子串
+  - 复杂度 O（mn）
+- 矩阵链式乘法
+  - 复杂度 O（n^3）
+- 最短路径
+  - 最短可靠路径 即求小于 k 条边的最短路径 等价于 Bellman-Ford 算法 复杂度 O(VE)
+  - 所有点对最短路径 DP 的 floyd 算法 复杂度 O(V^3) 注意一下三重循环的顺序
+  - 旅行商问题 复杂度 O(2^n\*n^2)
+- 独立集
+  - 本身是 NPHard 问题
+  - 树中的独立集可以通过 DP 解决 复杂度 O(V+E)
+- 笔记里有两道习题
+
+### CH7：LP
+
+- 如何建模 LP
+- 最大流
+  - 等价于不断找剩余网络的路径
+  - 任意流小于任意割 因此一旦有割=流 则是最大流和最小割
+  - 复杂度 O(CE) 如果使用 BFS 寻找最少边的路径 复杂度 O(VE^2)
+- 二部图匹配
+  - 规约为最大流问题
+  - 复杂度
+- 对偶问题
+  - 如何求对偶
+  - 对偶定理
+- LP 的最短路径（见笔记 有点恶心）
+- 集合覆盖 in LP 注意如何转换为对偶
+- 单纯形法
+  - 起始顶点部分再看看
+  - 单次迭代可以从 O(mn^4)降到 O(mn)
+  - 指数级算法 因为最坏情况下需要指数次迭代
+  - 然而在实际应用中却很棒
+
+### CH8：NP
+
+- 搜索问题定义 以及优化问题 搜索问题如何等价
+- 建议细看 16
+- 一些 NP 问题
+  - SAT
+  - TSP
+  - Rudrata 环路与路径
+  - 二等分 平衡分割
+  - 整数 LP
+  - 3D 匹配
+  - 独立集 顶点覆盖 团
+  - Graph Isomorphism （图同构）
+  - 最长路径
+  - 背包问题 子集和问题
+- P 问题
+  - 多项式时间内可以解决的搜索问题
+- NP 问题
+  - 多项式时间内可以验证解的搜索问题
+- NP 完全问题
+  - 任何 NP 问题都可以规约到它 并且它本身是 NP 问题
+- NP 难问题
+  - 任何 NP 问题都可以规约到它 并且它本身不一定是 NP 问题
+- 补问题（需要再看一遍）
+- 规约
+  - Rudrata 路径->Rudrata 环路
+  - 3SAT->独立集
+  - SAT->3SAT
+  - 独立集->顶点覆盖
+  - 独立集->团
+  - 3SAT->3D 匹配
+  - 3D 匹配->ZOE
+  - ZOE->子集和
+  - ZOE->ILP
+  - ZOE->Rudrata 环路
+  - Rudrata 环路->TSP
+    - TSP 的不可近似性
+  - 任意 NP 问题->SAT
+
+### CH9：NP 问题的处理
+
+- 回溯
+  - SAT 的 dpll
+- 近似算法
+  - 顶点覆盖
+  - 聚类
+  - TSP
+  - 背包问题
+- 启发式算法 局部搜索
+  - TSP
+  - 图划分
+  - 模拟退火
+  - HNN
+  - 最大割
+
+### 卷子
+
+- 7 道题
+- lp 的对偶
+- dp 15 分
+- 证明
+- 建模 证明算法正确性 算法分析复杂度 线性规划的最优值与对偶 20 分
+  - 一个 10 分的纯证明题 在ppt上出现过
+- 算法策略 贪婪 dp 分治（大师定理） 30 分
+  - 一道 dp 15 分 记得写递归出口和复杂度分析
+- 数图流的算法 25 分
+  - dfs bfs
+  - 最短路 mst
+  - dag 的算法
+  - 模运算
+  - 流
+- 证明 npc 15 分
+- 近似算法 10 分 和课上的四个问题某一个很像
