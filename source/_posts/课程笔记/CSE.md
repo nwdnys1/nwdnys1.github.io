@@ -1195,17 +1195,51 @@ excerpt: " "
   3. leader 发送 AppendEntries RPCs 给 follower
   4. leader 收到 majority 的 ack 后提交 log entry 并发送 commit message 给 follower 同时在 rsm 上执行 command
 - Consistency of Logs
-  - Raft 保证这样的性质：如果两个 server 上的 log entries 有相同的 index 和 term 那么这两个 entries 的内容一定相同 并且他们之前的所有 entries 也一定相同
+  - Raft 保证这样的性质：如果两个 server 上的 log entries 有相同的 index 和 term 那么这两个 entries 的内容一定相同 并且他们之前的所有 entries 也一定相同 这条性质也表明 一个 commited 的 entry 前面的所有 entry 一定也是 commited 的
   - AppendEntries RPC 会包含 leader 当前日志的 checksum 如果 follower 发现日志不一致则拒绝 这样就保证了上述的性质
   - leader 如果与 follower 不一致 会导致后续没法添加 log 因此 leader 被拒绝后 会找到不一致的部分 发送给 follower 进行覆写 最后添加新的 log entry 使得两者的日志完全一致
   - 上述的性质导致了即使一条 cmd 已经得到 majority 的 ack 并且在 rsm 上被执行 但是仍有可能被覆写 这样的问题会在下面提到的 Safety 中解决
 
 #### Safety
 
+##### Leader Rule
+
 - 如果让一台严重不一致的 server 成为 leader 就会导致上述的覆写问题 因此需要对 leader 的选举进行一定限制
 - 因此必须选取 term 和 index 最新的 server 作为 leader(先 term 后 index) 即 follower 如果发现自己的 log 比 candidate 更新则不投票
-- 这样的限制保证了 所有被 commit 的 log entry 一定会存在于未来所有 leader 的 log 中 也就保证了 leader 不会覆写一个已经被 commit 的 log entry（这里指的是当前 term 提交的 log entry）
-- 但是还不够 以前的 entry 还是有可能被覆写 此时加入 Commit Rule：对于一个先前的 log entry 除了需要存在于 majority 的 log 之外 还需要至少有一个当前任期的 entry 也存在于 majority 的 log 中
+- 这样的限制保证了 一旦当前任期的 leader 将一个 entry 写入 majority 的节点 那么这个 entry 一定会被保留在未来的 leader 中 不会被覆写 此时认为它是 commited 原因也很简单 未收到这个 entry 的节点不可能比 majority 的节点的 term 和 index 要大 因此不会成为 leader
+
+##### Commit Rule
+
+- 但是还存在一个可能使得存在于 majority 节点的 entry 被覆写的情况 就是这个 entry 是后续被覆写而达到 majority 的
+- 加入 Commit Rule：Leader 判定满足以下条件的 entry 是 commited 的
+  1. 这个 entry 在 majority 节点中
+  2. 这个 entry 之后存在一个当前 term 的 entry 在 majority 节点中
+- 原因很简单 由 Leader Rule 可知 如果当前任期的一个 entry 写入了 majority 节点 这个 entry 可以被认为是 commited 的 再由 Prefix 性质知道 其之前所有的 entry 也是 commited 的 而如果不存在后续的 entry 则可能会有其他更高 term 的节点 其 log 是不一致的 从而覆写了这个 entry
+
+#### Pesudo Code
+
+- 变量：![](https://image.blog.nwdnysl.site/20250115194428-b52458bb44df30a113a827c4d06ebf40.png)
+- RequestVote RPC：![](https://image.blog.nwdnysl.site/20250115195053-b41c5e190b8e7683cb664370320647d9.png)
+- AppendEntries RPC：![](https://image.blog.nwdnysl.site/20250115194818-7c4b727eebea568c10225c55ccd64a58.png)
+  ![](https://image.blog.nwdnysl.site/20250115194829-85600c3fdd11662831e4cdfbe823b234.png)
+
+#### Snapshot
+
+- 这部分上课没有讲 但是 Lab 里有 因此简单提一下
+- 随着时间的推移 日志条目数量会不断增加 导致存储空间消耗增加 日志回放变慢 于是 Raft 通过快照将日志压缩 使状态机只需要从快照恢复而不必回放所有日志条目 从而提高效率
+- 定义：快照是整个状态机的当前状态的存档 包含了从系统初始化到快照点的所有信息
+  替代了快照点之前的日志条目
+- 触发条件：通常是基于日志大小或时间间隔等条件触发的 例如当日志条目达到一定数量或大小时生成快照
+- 生成过程
+  - Leader 在某个合适的时间点将状态机的当前状态存储为一个快照文件 生成快照时系统会阻塞新的客户端请求 确保快照的一致性
+  - 生成快照后 系统丢弃快照点之前的日志条目 相当于 CKPT
+- 安装（恢复）过程
+  - 当一个节点显著落后于集群时 使用快照来加速恢复 Leader 会将快照发送给落后的节点 使用 InstallSnapshot RPC 进行传输 传输可以使用分块来减少网络开销
+  - 接收快照的节点将快照文件存储在本地 并用快照中的状态覆盖当前状态 节点从快照恢复后 将继续应用快照点之后的日志条目 以达到最新状态
+- 优点
+  - 减少存储需求：可以丢弃早期的日志条目 减少日志文件的大小 节省存储空间
+  - 提高恢复效率：从快照恢复状态比从头开始回放所有日志条目要快得多 尤其是在系统运行时间较长、日志数量较多的情况下
+  - 简化日志管理：快照使得日志文件更短、更易于管理 有助于提升系统的整体性能
 
 ## LEC 17: Introduction to Computing Network
 
@@ -1281,6 +1315,7 @@ excerpt: " "
           - P1、P2、P4 是校验位 用 P3、P5、P6、P7 的异或来计算
           - 3 个校验位出错的可能有 7 种 即 P1 出错、P2 出错、P1&P2 出错...P1 & P2 & P4 出错 刚好包含了 7 个位 对应 7 种错误
           - 海明编码保证了出错的校验位之和就是出错的位 比如 P1 & P2 出错代表了第 3 位出错
+          - ![](https://image.blog.nwdnysl.site/20250115200124-678ebd33876f5ac55c7d26bc93765436.png)
 
 ## LEC 18: Network: Network Layer
 
@@ -1318,6 +1353,8 @@ excerpt: " "
       - Fast convergence
       - flooding is costly：2 \* Nodes \* Lines 的开销
       - Only good for small networks（对于大网络来说开销太大）
+    - ![](https://image.blog.nwdnysl.site/20250115200306-86a21e41306fbc18b32d9833b929cf5c.png)
+    - 路由表如图：![](https://image.blog.nwdnysl.site/20250115200432-da0a72e90456b59289e54f0b01f0858d.png)
   - Distance-vector（发的人少 发的内容多）
     - 节点的 advertisements 中包含所有已知节点的 costs 以及是通过哪个邻居到达的
     - 只对邻居进行 advertise
@@ -1334,7 +1371,7 @@ excerpt: " "
     - 收敛速度更快 开销较大 但仍小于 link-state
     - 如何避免 loop？保证路径中没有自己即可
     - 遇到多条路径通向一个节点时如何选择？选择最短的
-    - 图变化了怎么办？router 需要抛弃包含了一个挂掉节点的路径（邻居停止 advertise 就被视为挂掉）
+    - 图变化了怎么办？router 需要抛弃任何包含挂掉节点的路径（邻居停止 advertise 就被视为挂掉）
   - Hierarchicy of Routing
     - 通过将节点分到不同 region 来减少路由表的大小 即只需要记录到某个 region 的 next_hop（仍需要维护 local region 的节点路由表）
     - Region 也被称为 AS（Autonomous System）自治系统
@@ -1359,8 +1396,9 @@ excerpt: " "
   - NETWORK_SEND(segment_buffer,dest,net_protocol,end_protocol)
     - 封装数据包 并把数据包交给 HANDLE
   - NETWORK_HANDLE(packet,net_protocol)
-    - 检查 dest 如果是自己 则转发个 end_layer
+    - 检查 dest 如果是自己 则转发给 end_layer
     - 否则查找路由表 并通过 link 层发送给 next_hop
+  - ![](https://image.blog.nwdnysl.site/20250115201120-4fe67a54fa0ca5c96059f883f906c641.png)
 - Forwarding
   - 查找路由表 如果没有则丢弃
   - TTL（Time To Live）：每经过一个节点 TTL 减一 如果 TTL 为 0 则丢弃 也就是最多转发几次 主要是为了防止 loop
@@ -1378,7 +1416,8 @@ excerpt: " "
 - 为什么需要 NAT？
   - IPv4 地址不够用 因此拆分为内网和外网地址 外网仍旧是唯一的 而内网地址可以在不同的局域网中复用（IPv6 则不需要 NAT）
   - 内网中的设备不会被外网直接访问 起到了保护作用
-- Router 会保存形如 <Src IP, Src Port, NAT Port> 的映射表 也就是将内网的一个端口映射到了 Router 的一个连接到外网的端口上
+- Router 会保存形如 <Src IP, Src Port, NAT Port> 的映射表 也就是将内网的一个端口映射到了 Router 的一个连接到外网的端口上 如下图：
+  ![](https://image.blog.nwdnysl.site/20250115201457-dfa3724c79f16fa9b17dd54f9e4e7100.png)
 - 网络层的 IP 协议 去修改了 Payload 中的 Port 信息（属于 end layer）破坏了解耦 如果 end layer 更换为一个没有 Port 的协议 则 NAT 就无法工作（现实是 TCP 与 UDP 霸权了）
 
 ## LEC 19: Network: End-to-end Layer
@@ -1411,9 +1450,13 @@ excerpt: " "
   - RARP（Reverse ARP）：通过 MAC 找 IP
 - An Example
   - app 想要给百度发包 先填入 src IP 与 dest IP
+    ![](https://image.blog.nwdnysl.site/20250115202019-defb3c739038c4b211c4d25b8ceed4f9.png)
   - 这是一个外网 IP 因此会发送给 router 即 src MAC 为自己的 MAC dest MAC 为 router 的 MAC
+    ![](https://image.blog.nwdnysl.site/20250115202053-260276af6aadbbff42edc508f72f4a8b.png)
   - router1 收到包后 根据路由找到了下一跳的 IP 地址 并通过 ARP 解析出 MAC 地址 于是 dest MAC 变为 router2 src MAC 变为 router1 同时根据 NAT src IP 变为 router1
+    ![](https://image.blog.nwdnysl.site/20250115202105-91da98451eab20c1738edf97f31e4914.png)
   - router2 和百度位于同一个局域网内 因此包的 dest MAC 变为百度 src MAC 变为 router2 注意 src IP 仍为 router1 否则百度无法回复给正确的 IP 地址
+    ![](https://image.blog.nwdnysl.site/20250115202112-9f6bae929b471af8102664e36191d93c.png)
 - ARP Spoofing：通过伪造 ARP 包来欺骗别人的 ARP 表 从而把数据包发送到 hacker 的设备上 成为了一个中间人
   - 防御方法：ARP Cache Poisoning Detection 也就是监测 ARP 包的流量 异常就会有人给你打电话哈（治标不治本）
   - 也可以通过静态 ARP 表来防御 需要手动添加新设备
@@ -1436,7 +1479,7 @@ excerpt: " "
     - timeout 绝对不能是固定的 否则一旦有网络拥塞就会导致大量的重发 越重发越拥堵 导致恶性循环
     - 类似的 spring 中的`@Scheduled`注解 就应该采用 fixedDelay 而不是 fixedRate 前者是从上一个任务结束后开始计时 后者是从上一个任务开始时计时
     - Adaptive Timeout：根据 RTT 动态调整 timeout 初始设为 RTT 的 1.5 倍 一旦发生超时则翻倍
-    - NAK（Negative Acknowledgement）：receiver 给 sender 发送 ack 时 带上丢失的数据包 sender 不用维护 timeout 相应的 receiver 需要 timeout 来判断 NAK 是否丢失 适用于某些特殊情况
+    - NAK（Negative Acknowledgement）：receiver 给 sender 发送 ack 时 带上丢失的数据包 sender 只需要维护一个全局的 timeout 来判定最后一个包是否收到 其他包则由 NAK 来确认 相应的 receiver 需要 timeout 来判断 NAK 是否丢失 适用于某些特殊情况
   - Receiver 会返回带有 nonce 的 ack Sender 就可以删除这个 nonce 了
   - 可能会导致重复 这是 at-most-once 需要解决的问题
 - at-most-once delivery
@@ -1488,10 +1531,12 @@ excerpt: " "
   - Basic Idea：开始时缓慢增加 cwnd（congestion window）一旦出现丢包则迅速减小 cwmd
   - AIMD（Additive Increase Multiplicative Decrease）：慢慢增加 快速减小 也即 cwnd+=1 遇到丢包则 cwnd/=2 问题在于最开始的增长太慢了
   - Slow start：一开始指数级增加 cwnd 直到出现丢包 之后回到 AIMD
+    ![](https://image.blog.nwdnysl.site/20250115202958-470b1bc24dceb5556e4478fadc19ec66.png)
   - Duplicate ack：出现丢包后 Receiver 会发送重复的 ack 通知 Sender 有包丢失了 用于尽快告知 Sender 丢包 从而调整 cwnd
   - 一旦没有 dup ack 而是 timeout 则说明网络出现了严重的拥塞 会将 cwnd 重置为 1
   - 最终 TCP 通过不断感知丢包 使得发送速率逐渐逼近网络的最大带宽
   - Efficency & Fairness：如果画出二维图 会发现(cwnd1,cwnd2)这个点增长时是沿着 y=x 的方向增长的（因为是+=1） 而减少时则是向着原点减少的（因为是/=2） 最终会收敛到 y=x 上震荡 也就保证了公平性
+    ![](https://image.blog.nwdnysl.site/20250115203026-8babf48bcf25feea986d79a95d3f90f3.png)
 - Weakness of TCP
   - 如果 router 的 buffer 太多 会导致时延很长
   - 无线网的丢包主要是因为信号不好 应该加快速率 由于 TCP 的节流反而会减少速率 导致恶性循环
@@ -1513,7 +1558,7 @@ excerpt: " "
   - DNS 的解析过程从后往前 从根服务器开始逐个递归找到对应的 name server 的 IP 地址 通常返回多个 IP 地址
   - DNS 是 global 的 全球唯一
   - 实际上最后的根域名是`.` 比如`blog.nwdnysl.site.` 通常会省略
-  - 为了容错 一个域名通常会有多个 name server
+  - 为了容错 一个 zone 通常会有多个 name server
 - 3 Enhancement on Lookup
   - `/etc/hosts`中可以存储<IP,Domain>的映射 用于本地解析 `/etc/resolv.conf`中可以存储一些 name server 的 IP 会优先使用它们来解析 如果没有配置 则使用默认的根域名服务器
   - DNS Request Process
@@ -1547,6 +1592,7 @@ excerpt: " "
   - value space：值的集合
   - mapping：将名字映射到值的算法
   - context：名字的上下文 比如文件系统的当前目录
+  - ![](https://image.blog.nwdnysl.site/20250115203459-ff0699bc9929c0ac878a2781ce1a25c6.png)
 - Lookup Algorithm
   - recursive lookup：递归查询
   - multiple lookup：多重查询 即逐个依次查询 比如查询 path 中的命令
@@ -1585,7 +1631,7 @@ excerpt: " "
   - Seeder：拥有完整数据的 peer
   - Peer：下载数据的 peer 下载完后会变成 seeder 通常是一个普通的用户设备
 - Steps
-  - 发布一个 .torrent 文件到服务器上 里面包含了 tracker 的 url、文件名、文件大小、文件的 SHA-1 值等信息
+  - 发布一个`.torrent`文件到服务器上 里面包含了 tracker 的 url、文件名、文件大小、文件的 SHA-1 值等信息
   - Tracker 会记录一组 peer 的信息 即它们包含了文件的哪些部分
   - Seeder 会告知 tracker 自己有完整的文件
   - Peer 通过 tracker 获取到一组 peer 并通过 peer 之间的连接来下载文件
@@ -1613,6 +1659,7 @@ excerpt: " "
     - 记录离当前节点 1/2 1/4 1/8...的位置 然后进行类似二分的跳跃
     - 如果节点挂掉 finger table 可能会导致错过新存放了数据的节点
     - 结合两者即可解决 节点记录 successor list（每个节点的下 r 个节点）当发现跳跃到的节点挂掉时就可以遍历 successor list 来找到正确的节点 其中网络越稳定 r 越小
+    - ![](https://image.blog.nwdnysl.site/20250115215306-46977b809edfb64725da225965ac5dca.png)
   - Join 新节点
     - 只需要向其 successor 查询一下 并更新自己的 finger table 并不需要修改其他节点的 finger table 因为不会影响实际的查询负载
   - 当节点比较少时 可能会存在负载不均衡的问题
@@ -1633,7 +1680,7 @@ excerpt: " "
 
 ### Computing Device
 
-- 单个设备提升算力的根本就是并行
+- 单个设备提升算力的关键就是并行
 
 #### CPU
 
@@ -1644,6 +1691,7 @@ excerpt: " "
   - 性能增益不可能达到理论的倍增 因为指令可能有依赖
   - 有时候访存也会成为性能瓶颈 访存的时间 = Latency + Payload / Bandwidth
   - Roofline Model：刻画算力与带宽的关系图 y 轴是算力 单位是 GFLOP/s 即每秒多少次浮点运算 x 轴是应用利用内存的效率 单位是 Flop/Byte 即读取一个字节数据可以进行多少次运算 于是斜率就是应用对于带宽的需求 单位为 Byte/s 于是设备在图中表示为两条线 一条代表算力的水平线与一条代表带宽的斜线 应用的 OI（Operational Intensity）所落在哪条线 就说明哪个因素是瓶颈
+    ![](https://image.blog.nwdnysl.site/20250115204935-9c262a8d6ff5f140dd0d94241e459d70.png)
 
 #### GPU
 
@@ -1700,12 +1748,13 @@ excerpt: " "
          - 通过心跳来检测节点是否存活
          - 一旦某个节点挂掉 将其原本的任务重置为初始状态 并分配给其他节点执行
        - Master failure
-         - master 不再能通过重做来恢复 因为一个完整的大任务可能需要很长时间 不可以让之前的进度全部丢失
+         - Master 不再能通过重做来恢复 因为一个完整的大任务可能需要很长时间 不可以让之前的进度全部丢失
          - 因此可以通过 CKPT 来容错 即 master 的状态（比如每个 worker 的状态 中间结果的位置等）会被定期持久化到 GFS 中 一旦挂掉 通过读取 GFS 的 CKPT 来恢复 不再需要重做所有计算
        - MapReduce 有时候会因为调用第三方库而遇到 bug 其处理方式是简单的 skip 因为第三方的 bug 不是 MapReduce 的问题 并且牺牲了一点正确性来保证了容错性是可以接受的
   4. Optimizing for locality
      - 有两部分数据传输 一是 mapper 从 GFS 中读取数据 二是 reducer 从 intermediate file 中读取数据 后者一般比较小 不是性能瓶颈
      - 为了解决前者 Master 会把 map 任务分配给存储了这一部分数据的节点 保证数据在节点本地 无需网络开销
+     - 另外还可以通过把 map 和 reduce 任务分配给同一个节点来减少网络开销
   5. Partitioning data for parallelism
      - map 可以天然并行 reduce 则需要根据 key 来分组实现并行
 - Execution Flow（隔壁 AEA 已经写的很清楚了）
@@ -1729,7 +1778,7 @@ excerpt: " "
   - 容错性好
   - 对于适合 MapReduce 的任务性能很好
   - 不适合实时处理场景
-  - 编程抽象是否有限 可以看到 MapReduce 对于比较复杂的并行化任务并不是很友好 因此下节课我们会介绍 Computation Graph
+  - 编程抽象有限 可以看到 MapReduce 对于比较复杂的并行化任务并不是很友好 因此下节课我们会介绍 Computation Graph
 
 ## LEC 24: Distributed Computing: Distributed Computing Frameworks
 
@@ -1752,6 +1801,7 @@ excerpt: " "
 
 - 接下来我们终于到达了目的地：分布式训练 下面介绍一下如何使用计算图来进行分布式训练
 - 以所有 AI 模型训练都会用到的梯度下降法为例 可以看到求权重的下一次迭代可以表示为如下的计算图 其中 x 是输入 y 是 label w 是当前权重 最终计算出 dw 来更新权重
+  ![](https://image.blog.nwdnysl.site/20250115205945-a3ed798d7c2e308468ae371eb9f0e8a6.png)
 - 为了分布式训练 我们需要考虑如何实现这个计算的并行化 接下来介绍几种常用的并行化方法
 
 ### Parallelism
@@ -1772,7 +1822,7 @@ excerpt: " "
     - 进行 sharding 一个节点只负责一部分参数的 reduce 仍然只需要 1 轮 每个节点的通信量变为 O(P) 与节点数量无关
     - high fan-in 问题：每个节点仍需要收到 O(N) 个节点的请求 还是存在高并发问题
   - Decentralized Allreduce
-    - 所有节点串行的发送参数 减少了并发请求 通信量仍然是 O(N \* P) 需要的轮数是 O(N^2)
+    - 所有节点串行的发送参数 减少了并发请求 通信量仍然是 O(N \* P) 需要的轮数是 O(N^2) 有 O(1)的 fan-in
     - 如果 1 给 0 发的同时 2 给 1 发 3 给 2 发 则可以减少轮数为 O(N)
   - Ring Allreduce
     - 节点的通信形成一个环 即 0->1->2->3 最终节点 3 进行 reduce 并广播
@@ -1784,6 +1834,7 @@ excerpt: " "
     - 不断二分 reduce 的方法 即每个节点负责两个子节点的 reduce 最终汇总到根节点上 最终再进行广播
     - 每个节点的通信量是 O(P) 通信轮数是 O(logN) fan-in 为 3（父节点和两个子节点）
     - 然而负载并不均衡（叶与根 fan-in 更少）于是使用 Double Binary Tree Allreduce 将二叉树进行翻转 保证负载均衡
+  - ![](https://image.blog.nwdnysl.site/20250115211247-c46ecf4f8b4ccf371612e4bb43f450c9.png)
 
 #### Model Parallelism
 
@@ -1889,8 +1940,10 @@ excerpt: " "
 - Instrumentation
   - 在原代码的 jmp 指令前加入一段检查代码 其会检查 jmp 的目标地址是否是某一个硬编码的数据（比如 12345678） 如果不是则不跳转
   - 在目标地址的代码前加入这个硬编码的数据 确保控制流会到这
+    ![](https://image.blog.nwdnysl.site/20250115212113-870e31eeb1d0042ce98ab93ce0c82eca.png)
   - 如果第三方库的代码已经加入 data 但是用户的 app 没有加入检查代码 会导致把这段数据当作代码执行
   - 解决方法是使用 prefetch 指令 这个指令遇到无法执行的代码会直接跳过 相当于一个 nop
+    ![](https://image.blog.nwdnysl.site/20250115212127-7f7b1921608500cbc0fb0650ae010edb.png)
 - CFI Precision
   - 如果 A 调用 C B 调用 C 或 D 那么要求 C 的 data 与 D 的 data 必须一样 这就导致 A 是可以合法调用 D 的
   - 解决方法是修改 B 的汇编代码 把原本的`CALL %eax` 变为`CALL C_ADDR`与`CALL D_ADDR`的直接跳转 缺点是增加了代码大小
@@ -1979,13 +2032,17 @@ excerpt: " "
 - Encryption Properties
   - encrypt：可逆 保证了机密性
   - MAC：不可逆 保证了完整性 也就是比对哈希值
-- 密文被截获后可以进行重发攻击 于是需要加入时间戳或 nonce 来保证消息每次都不一样
+- 最简单的信息传输就是 A 发送数据的密文以及 MAC 给 B B 再解密得到明文和 MAC 然后比对检验完整性
+- Replay attacks：密文被 E 截获后可以不断重发 于是需要加入时间戳或 nonce 来保证消息每次都不一样
 - 然而 A B 之间是对称的 因此 E 可以把消息发给 A 于是引入了非对称加密
-- 非对称加密是指两端使用不同的密钥进行加密
-- A 与 B 最开始的密钥交换可以通过 DH（Diffie-Hellman）算法来实现 见算法设计课本
-- 虽然 E 无法知道密钥 但是却可以作为中间人来进行攻击 于是引入了数字签名
-- RSA 是一种非对称加密算法 通过公钥加密 私钥解密 实现了数字签名 即 A 可以用自己的私钥对消息进行签名 B 可以用 A 的公钥来验证签名
-- 公钥由 CA（Certificate Authority）来签发 证书中包含了公钥与签发者的信息
+- 非对称加密是指两端使用不同的密钥进行加密 即 A 使用 ka 加密 使用 kb 解密 B 使用 kb 加密 使用 ka 解密
+- A 与 B 最开始的密钥交换可以通过 DH（Diffie-Hellman）算法来实现
+  ![](https://image.blog.nwdnysl.site/20250115220050-338bc8710f5d121b2ddbd075b3457142.png)
+- 虽然 E 无法知道密钥 但是却可以作为中间人来进行攻击 于是引入了数字签名 用于确认消息的发送者到底是谁
+  ![](https://image.blog.nwdnysl.site/20250115220110-95dc4d59744ac5f00abff53564e312f0.png)
+- RSA 是一种非对称加密算法 通过公钥加密 私钥解密 实现了数字签名 即 A 把公钥发布给所有人 B 通过公钥加密消息发给 A 只有 A 通过私钥才能解密 也就保证了 A 是消息的发送者 E 无法再发起中间人攻击 因为要想伪装成 B E 需要 B 的私钥
+- 公钥由 CA（Certificate Authority）来签发 维护每个人的公钥
+- 为了方便考虑 不可能每次对话都向 CA 去索要公钥 因此 CA 会对公钥进行签名 也就是证书 需要通信时 对方可以把 CA 签发的证书发给你 你可以通过 CA 的公钥来验证证书的真实性 也就确认了对方的身份 CA 的公钥通常存储在浏览器中
 
 ### Privacy
 
@@ -2000,6 +2057,7 @@ excerpt: " "
   - B 选择一个随机数 r 如果选择 1 则使用 K1 加密 r 得到 c 返回给 A
   - A 用 K0 与 K1 解密 c 得到 r0 与 r1 然后把 e0=r0 xor m0 e1=r1 xor m1 发给 B
   - B 只需要用 r xor e1 就可以得到 m1
+- ![](https://image.blog.nwdnysl.site/20250115222436-5c375678e0a87cd6dd02b37902e008e0.png)
 
 #### DP（Differential Privacy）
 
@@ -2030,13 +2088,16 @@ excerpt: " "
   - 于是 A 可以通过解密 CT'得到 f(Data)
   - 换句话说 加密和 f 函数具有交换律
 - SWHE & FHE
-  - HE：如果一个操作 f 可以与加密操作交换 则称为 HE
-  - SWHE：只能进行有限次某些类型的操作 比如加法和乘法
-  - FHE：可以进行任意次任意类型的操作
-- TEE（Trusted Execution Environment）
-  - 内存是加密的 CPU 的 cache 是明文
-  - 保证了除非有人可以读取 CPU 的 cache 否则是安全的 实现了一部分的 HE
-  - 信任的人从云厂商变为了 CPU 厂商
+  - HE：如果一个操作 f 可以与加密操作交换 则称为这种加密方式具有 HE
+  - SWHE：只能进行有限次某些类型的操作 比如加法和乘法同态性 比如 BFV
+  - FHE：可以进行任意次任意类型的操作 即全同态性
+- ![](https://image.blog.nwdnysl.site/20250115222635-eb6978d571c49d328060d8945586fad7.png)
+
+### TEE（Trusted Execution Environment）
+
+- 内存是加密的 CPU 的 cache 是明文
+- 保证了除非有人可以读取 CPU 的 cache 否则是安全的 实现了一部分的 HE
+- 信任的人从云厂商变为了 CPU 厂商
 
 #### Process of bug report
 
@@ -2044,230 +2105,3 @@ excerpt: " "
 2. 报告给厂商
 3. 修复 bug
 4. 公开 bug 与修复的过程
-
-## 算法设计
-
-### CH0: Introduction
-
-- 大 O 符号：O(f(n)) 表示存在一个常数 c 使得对于足够大的 n 有 f(n) <= c\*g(n) 其中 g(n) 是一个函数
-- ![alt text](image.png)
-- ![alt text](image-1.png)
-- 斯特林数：n! = sqrt(2\*pi\*n)\*(n/e)^n ![alt text](image-2.png)
-
-### CH1
-
-- 加法是 O（n） 并且是最优的 n 是位数
-- 乘法是 O（n^2） 不是最优的
-- Quiz：二进制下一个数乘 2 的复杂度是多少？O（1） 因为只需要左移一位
-- 除法是 O（n^2） 不是最优的
-- 模运算
-  - 替代准则
-  - 结合律 交换律 分配律
-  - 可以将任何中间结果转换为同余的数
-  - 模加法：O（n）
-  - 模乘法：O（n^2）
-  - 模幂运算：O（n^3）
-  - 最大公因数算法
-    - Euclid's 规则：gcd(a,b) = gcd(b,a mod b)
-    - O（n^3）2n 次迭代 每次迭代一次除法
-  - 扩展欧几里得算法
-  - 模除法
-    - 模倒数：ax ≡ 1 mod N
-    - 模的除法定理
-    - 模除法是通过乘除数的模倒数来实现的
-- 素性测试
-  - 费马小定理
-  - 卡迈克尔数
-  - 非卡迈克尔数至少有一半的 a 是无法通过费马小定理的 因此可以以 1/2 的概率缩减
-  - 素数的随机生成
-    - 拉格朗日素数定理
-    - 平均在 O（n）时间内生成一个素数
-  - 蒙特卡洛算法
-  - Las Vegas 算法
-- 密码学
-  - 一次一密乱码本
-  - RSA 算法 安全的前提是大整数的因数分解是困难的
-
-### CH2：Divide and Conquer
-
-- 乘法的复杂度可以通过分治法降低到 O（n^log2 3）
-- 递推式
-  - 主定理
-- 归并排序
-  - O（nlogn）
-- 中位数
-  - 选择问题 快速选择算法
-    - 最差情况是 O（n^2） 理想情况是 O（n）
-    - 可以证明平均情况是 O（n）
-- 矩阵乘法
-  - Strassen 算法
-    - O（n^log2 7）
-    - 和乘法的划分一样 从 8 个乘法变成了 7 个
-- 快速傅里叶变换
-  - O（nlogn）
-  - 用于多项式乘法
-
-### CH3：Graph
-
-- 无向图的 dfs 也可以用于判断连通性
-- 有向图的 dfs 通过 dfs 树的回边来判断 DAG 并且可以通过 post(g)来给出拓扑排序
-- 强连通分量
-  - 有向图中 u -> v 与 v -> u 都存在路径 则称 u 与 v 连通 于是可以把图分解为强连通分量
-  - 强连通部件算法 O（n+m）
-
-### CH4：Path
-
-- BFS
-  - O（n+m）
-  - 无权图的最短路径
-- Dijkstra
-  - O（(V+E)logV）采用优先队列
-  - 有权图的最短路径
-- 负边图
-  - Bellman-Ford 算法 O（VE）
-  - 可以检测到负环
-- DAG
-  - O（n+m）
-  - 可以通过设边权为负来求最长路径
-- 2 个练习题 10.21 结尾
-
-### CH5：Greedy
-
-- 最小生成树
-  - Kruskal 算法
-    - 分割性质：X 是 MST 的一部分 那么对于任意可以将 X 划分到一边的割 其最小边是 MST 的一部分
-    - 证明 只需要反证一定可以找到更小的 MST
-    - 使用并查集来合并
-    - 复杂度 O（ElogE）主要是排序
-    - 证明没看懂
-  - Prim 算法
-    - 伪代码和 Dijkstra 一样 只不过每次选出的点是距离当前集合最近的点 而不是距离源点最近的点
-    - 复杂度 O（V^2）线性搜索 或 O（（V+E）logV）优先队列
-  - 随机 MST 贪心
-    - 1 我不是很懂 2 就是分割性质
-- Set Covering
-  - 通过贪心得到一个近似解
-- Coin Changing
-  - 1 5 10 25 100 贪心是最优解
-  - 如何证明？归纳法 有空可以看看
-
-### CH6：Dynamic Programming
-
-- 最长递增子序列
-  - 等价于 DAG 的最长路径
-  - 复杂度 O（n^2）
-- 编辑距离
-  - 复杂度 O（mn）
-  - 隐含 DAG
-- 背包问题
-  - 多副本的背包问题 O（nW）一维表 长度为 W 每次需要 n
-  - 单副本的背包问题 O（nW）二维表 长度为 n 宽度为 W
-- 最长公共子序列
-  - 复杂度 O（mn）
-- 最长公共子串
-  - 复杂度 O（mn）
-- 矩阵链式乘法
-  - 复杂度 O（n^3）
-- 最短路径
-  - 最短可靠路径 即求小于 k 条边的最短路径 等价于 Bellman-Ford 算法 复杂度 O(VE)
-  - 所有点对最短路径 DP 的 floyd 算法 复杂度 O(V^3) 注意一下三重循环的顺序
-  - 旅行商问题 复杂度 O(2^n\*n^2)
-- 独立集
-  - 本身是 NPHard 问题
-  - 树中的独立集可以通过 DP 解决 复杂度 O(V+E)
-- 笔记里有两道习题
-
-### CH7：LP
-
-- 如何建模 LP
-- 最大流
-  - 等价于不断找剩余网络的路径
-  - 任意流小于任意割 因此一旦有割=流 则是最大流和最小割
-  - 复杂度 O(CE) 如果使用 BFS 寻找最少边的路径 复杂度 O(VE^2)
-- 二部图匹配
-  - 规约为最大流问题
-  - 复杂度
-- 对偶问题
-  - 如何求对偶
-  - 对偶定理
-- LP 的最短路径（见笔记 有点恶心）
-- 集合覆盖 in LP 注意如何转换为对偶
-- 单纯形法
-  - 起始顶点部分再看看
-  - 单次迭代可以从 O(mn^4)降到 O(mn)
-  - 指数级算法 因为最坏情况下需要指数次迭代
-  - 然而在实际应用中却很棒
-
-### CH8：NP
-
-- 搜索问题定义 以及优化问题 搜索问题如何等价
-- 建议细看 16
-- 一些 NP 问题
-  - SAT
-  - TSP
-  - Rudrata 环路与路径
-  - 二等分 平衡分割
-  - 整数 LP
-  - 3D 匹配
-  - 独立集 顶点覆盖 团
-  - Graph Isomorphism （图同构）
-  - 最长路径
-  - 背包问题 子集和问题
-- P 问题
-  - 多项式时间内可以解决的搜索问题
-- NP 问题
-  - 多项式时间内可以验证解的搜索问题
-- NP 完全问题
-  - 任何 NP 问题都可以规约到它 并且它本身是 NP 问题
-- NP 难问题
-  - 任何 NP 问题都可以规约到它 并且它本身不一定是 NP 问题
-- 补问题（需要再看一遍）
-- 规约
-  - Rudrata 路径->Rudrata 环路
-  - 3SAT->独立集
-  - SAT->3SAT
-  - 独立集->顶点覆盖
-  - 独立集->团
-  - 3SAT->3D 匹配
-  - 3D 匹配->ZOE
-  - ZOE->子集和
-  - ZOE->ILP
-  - ZOE->Rudrata 环路
-  - Rudrata 环路->TSP
-    - TSP 的不可近似性
-  - 任意 NP 问题->SAT
-
-### CH9：NP 问题的处理
-
-- 回溯
-  - SAT 的 dpll
-- 近似算法
-  - 顶点覆盖
-  - 聚类
-  - TSP
-  - 背包问题
-- 启发式算法 局部搜索
-  - TSP
-  - 图划分
-  - 模拟退火
-  - HNN
-  - 最大割
-
-### 卷子
-
-- 7 道题
-- lp 的对偶
-- dp 15 分
-- 证明
-- 建模 证明算法正确性 算法分析复杂度 线性规划的最优值与对偶 20 分
-  - 一个 10 分的纯证明题 在ppt上出现过
-- 算法策略 贪婪 dp 分治（大师定理） 30 分
-  - 一道 dp 15 分 记得写递归出口和复杂度分析
-- 数图流的算法 25 分
-  - dfs bfs
-  - 最短路 mst
-  - dag 的算法
-  - 模运算
-  - 流
-- 证明 npc 15 分
-- 近似算法 10 分 和课上的四个问题某一个很像
