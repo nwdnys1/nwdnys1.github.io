@@ -1,11 +1,9 @@
 ---
-title: 从'一'开始优化EBOOKSTORE项目
+title: 优化Ebookstore项目
 date: 2024-09-23 14:01:00
-categories: WEB开发
+categories: 项目经验
 tags:
-  - 前端
-  - 后端
-  - 部署
+  - 开发
 index_img:
 banner_img:
 excerpt: "慢慢把学到的新技术栈都应用到 ebook 这个项目里来 记录一下过程"

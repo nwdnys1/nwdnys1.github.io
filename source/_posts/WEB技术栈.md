@@ -1,19 +1,16 @@
 ---
-title: 技术栈学习笔记
+title: 技术栈学习
 date: 2024-09-07 23:44:41
-categories: WEB开发
+categories: 项目经验
 tags:
-  - 前端
-  - 后端
-  - 部署
+  - 开发
+  - 架构
+  - 运维
+  - 测试
 index_img:
 banner_img:
-excerpt: " "
+excerpt: ""
 ---
-
-# 前端
-
-# 后端
 
 ## Spring Cache 整合 Redis
 
@@ -93,8 +90,6 @@ excerpt: " "
 - Spring Cloud Stream：消息队列的中间件 封装了整个消息队列 只暴露 input 和 output 的接口
 
 - Spring Cloud Bus：相当于消息总线 可以广播通知其他服务
-
-# 部署
 
 ## Nginx
 
@@ -266,8 +261,6 @@ Nginx (engine x) 是一个高性能的 HTTP 和反向代理 web 服务器软件 
   - statefulset 用于部署数据库 pod 的 因为数据库是有状态的 需要额外的数据同步和共享
 - 架构：
 
-# 数据库
-
 ## Cloud Firestore
 
 一个基于非关系型数据库的云端数据库服务 非关系型数据库适合读大于写的场景
@@ -322,7 +315,11 @@ Nginx (engine x) 是一个高性能的 HTTP 和反向代理 web 服务器软件 
   - 集群搭建：
     - 当数据实在太多时 需要进行分库 因此可以实现多个主节点分别存储一部分数据 多个主节点作为哈希桶 根据键的哈希值来决定存放的节点是哪个 目的是分担单节点的内存压力
 
-# 项目管理
+## Redisearch
+
+- 文档参考：https://redis.io/docs/latest/develop/interact/search-and-query/indexing/（redis不同类型的索引如何使用）https://redis.readthedocs.io/en/stable/examples/search_json_examples.html#Projecting-using-JSON-Path-expressions（将 JSON 数据添加到索引的示例代码）
+- redis 实例需要使用 redis-stack 项目中使用 python 因此安装 pip 库的 redis 即可
+- 具体代码见项目中的`realtime_map.py`文件 只需要先创建 schema 描述索引的字段类型 然后添加索引即可
 
 ## Apache Maven
 
@@ -363,6 +360,13 @@ Nginx (engine x) 是一个高性能的 HTTP 和反向代理 web 服务器软件 
   - test 执行测试
   - package 打包 jar 包到 target 文件夹里 在 pom 里配置插件后 可以把项目的所有依赖都一起打包
 
+## Apache Avro
+
+- 文档参考：https://avro.apache.org/docs/
+- python 需要安装 avro 库 java 则通过 maven 导入 avro 依赖
+- 需要预先编写好数据的 schema 语法见文档 编写好后即可使用 avro 的序列化与反序列化方法进行数据的压缩与解压
+- python 中数据类型比较自由 使用 dict 类型即可操作 但是 java 的数据类型比较严格 avro 本身提供一个 record 类封装数据 但是我使用了 fastjson 库的 json 类型来操作数据 这就导致必须要编写一个转换函数进行转换 并且这个转换需要递归分类进行 一旦类型对应不上 序列化时就会报错
+
 ## Swagger UI
 
 https://zhuanlan.zhihu.com/p/703966719
@@ -370,3 +374,5 @@ https://zhuanlan.zhihu.com/p/703966719
 ## Java 线程池
 
 https://blog.csdn.net/m0_72156649/article/details/140460116
+
+##

@@ -3,9 +3,8 @@ title: 《互联网应用开发技术》课程笔记
 date: 2024-09-07 23:46:37
 categories: 课程笔记
 tags:
-  - 前端
-  - 后端
-  - 数据库
+  - 开发
+  - 架构
 index_img:
 banner_img:
 excerpt: " "

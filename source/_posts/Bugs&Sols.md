@@ -1,17 +1,16 @@
 ---
-title: 遇到的 Bugs & Sols
+title: Bugs & Sols 记录
 date: 2024-09-07 23:42:00
-categories: WEB开发
+categories: 项目经验
 tags:
-  - 前端
-  - 后端
-  - 部署
+  - 开发
+  - 架构
+  - 运维
+  - 测试
 index_img:
 banner_img:
 excerpt: " "
 ---
-
-# 前端
 
 ## React
 
@@ -43,7 +42,6 @@ excerpt: " "
 
 - rn 项目使用 netinfo 第三方库来监听网络状态：https://github.com/react-native-netinfo/react-native-netinfo
 
-# 后端
 
 ## Spring Boot
 
@@ -88,8 +86,6 @@ excerpt: " "
 
 - 注意第一次建立连接的请求看似是 ws 协议 实际上是 http 请求 后续升级为 ws 协议 部署到服务器后 由于 nginx 代理会把这个 http 请求转发给前端文件夹 需要进行配置转发 原理同后端的配置 主要是需要几个升级协议头 见：https://blog.csdn.net/wx_l617188072/article/details/134548473
 
-# 中间件
-
 ## Redis
 
 - redis 的配置
@@ -121,11 +117,9 @@ excerpt: " "
 
 - ELF 结合 springboot：https://www.cnblogs.com/toutou/p/SpringBoot_elk.html#_label1
 
-# 部署
 
-- Ubuntu 使用 apt 安装的 nodejs 版本太低了 如何安装 v18：https://blog.csdn.net/weixin_42582542/article/details/129982650
 
-# 杂项
+## 杂项
 
 - 将后端改为使用 https 但前端仍为 http 时 会导致跨域问题 具体而言 服务器通过响应 body 里的 set-cookie 项来提供 cookie 其中有一个 samesite 属性用于告诉浏览器（客户端）这个 cookie 在什么时候需要发送 如果响应体里没有 samesite 属性 浏览器默认设置其为 lax 这会导致后端只能在不跨站（前端后端 url）的情况下发送 cookie 解决方法是后端显式设置 samesite 为 none 即不管何时都发送
 
@@ -139,3 +133,5 @@ excerpt: " "
 - js 中的对象赋值都是按引用传递的 这意味着如果你不进行显式的深拷贝 就会莫名其妙改变父组件的参数 注意赋值时用复制对象而不是简单的"="即可
 
 - Android Studio 启动报错：https://zhuanlan.zhihu.com/p/636061626
+
+- Ubuntu 使用 apt 安装的 nodejs 版本太低了 如何安装 v18：https://blog.csdn.net/weixin_42582542/article/details/129982650

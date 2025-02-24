@@ -4,8 +4,7 @@ date: 2024-09-23 14:01:00
 categories: 课程笔记
 tags:
   - 架构
-  - 事务
-  - 数据库
+  - 开发
   - 深度学习
 index_img:
 banner_img:
