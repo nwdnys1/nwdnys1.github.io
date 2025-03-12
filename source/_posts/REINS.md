@@ -1,5 +1,5 @@
 ---
-title: 在SJTU-REINS的打工日记
+title: SJTU-REINS
 date: 2024-10-05 21:19:00
 categories: REINS
 tags:
