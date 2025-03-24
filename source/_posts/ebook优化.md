@@ -6,7 +6,7 @@ tags:
   - 开发
 index_img:
 banner_img:
-excerpt: "慢慢把学到的新技术栈都应用到 ebook 这个项目里来 记录一下过程"
+excerpt: " "
 ---
 
 慢慢把学到的新技术栈都应用到 ebook 这个项目里来 记录一下过程
