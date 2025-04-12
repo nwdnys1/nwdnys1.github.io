@@ -42,7 +42,6 @@ excerpt: " "
 
 - rn 项目使用 netinfo 第三方库来监听网络状态：https://github.com/react-native-netinfo/react-native-netinfo
 
-
 ## Spring Boot
 
 - ORM 框架中如果父子设置了 orphan delete 子集合的更新就不能直接使用 set 函数 而需要先 clear 后 addall 这是由于引用改变导致了孤儿被删除？
@@ -60,6 +59,8 @@ excerpt: " "
 - 图片上传后端教程：https://juejin.cn/post/7022823623844954142、https://blog.csdn.net/twotwo22222/article/details/124680688
 
 - 在设置上传图片的名称时使用了 JDK 自带的 URLencoder 发现会把空格编码为加号：https://www.jianshu.com/p/9647140b0fd5
+
+- 沙币 springboot 的依赖管理 导致了 commons-lang3 强制为 3.10 版本 也就缺少了 Range.of 方法 直到 3.3.0 版本才接受 commons-lang3 为 3.14 如果以后遇到莫名其妙的 NoClassDefFoundError 错误 可以考虑升级 sb 到最新版本 附链接：https://github.com/spotbugs/spotbugs/issues/2686
 
 ## Spring Security
 
@@ -99,6 +100,8 @@ excerpt: " "
 
 - 沟槽的 redis 如果从缓存中获取的对象带有集合属性 就会报懒加载错误 具体原因我不懂 解决方法是覆写 hibernate 的方法 见https://stackoverflow.com/questions/54722546/sprng-boot-jpa-redis-lazyinitializationexception
 
+- Redisearch 的索引是跨 db 的 也就是说 建立的索引在 db0 和 db1 都可以使用 并且 flushdb 操作会删除索引
+
 ## Nacos
 
 - nacos 的注册逻辑：nacos 是自动帮你把服务的 ip 进行发现并注册 并不是随便选一个 ip 然后把服务放到这个 ip 上 因此实际上 注册过程相当于 nacos 找到这个服务的 ip（可能是优先内网） 然后加入到服务列表 这样其他服务调用这个服务时 就会向服务列表里记录的 ip 发送请求 https://blog.csdn.net/weixin_48359973/article/details/132378494
@@ -117,7 +120,9 @@ excerpt: " "
 
 - ELF 结合 springboot：https://www.cnblogs.com/toutou/p/SpringBoot_elk.html#_label1
 
+## Docker
 
+- builderKit 是用于在镜像 build 期间多阶段构建的插件 在使用时发现 `--mount=type=bind`指令无法挂载宿主机的目录 一般使用`--mount=type=cache`来缓存 mvn 或 pip 的依赖包
 
 ## 杂项
 
