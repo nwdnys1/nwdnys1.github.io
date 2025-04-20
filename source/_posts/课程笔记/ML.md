@@ -253,7 +253,72 @@ excerpt: " "
     3. 计算每个单词组合的 Q 和 K 的点积 最终得到一个权重矩阵 A 代表了单词 i 与单词 j 的相关性 也即注意力权重
     4. 用 softmax 函数将权重矩阵归一化
     5. Hi’ = ∑(Aij \* Vj) 其中 Aij 是单词 i 对于单词 j 的注意力 Vj 是单词 j 的向量 这个 Hi’ 就是单词 i 的新的理解
-  - sa的计算过程类似于矩阵运算 因此显然可以并行化 具体而言
+  - sa 的计算过程类似于矩阵运算 因此显然可以并行化 具体而言
     1. Q = H \* Wq, K = H \* Wk, V = H \* Wv
     2. A = softmax(Q \* K^T / sqrt(dk)) 其中 dk 是 K 的维度
     3. H’ = A \* V
+- RNN 可以保留语句的顺序 而 SA 机制是不保留顺序的 因此 TF 引入了位置编码（Positional Encoding）
+  - 一个位置对应一个唯一的位置向量 e_i 这个 e_i 会被加到单词的向量 h_i 上一起输入到模型中
+- 将 RNN Encoder-Decoder 模型中的 RNN 替换为 Self-Attention 就得到了 Transformer 模型
+- TF 还可以用 Resudual Connection 和 Layer Normalization 来加速训练
+  - Residual Connection：将输入直接加到输出上 使得模型更容易训练
+  - Layer Normalization：对每一层的输出进行归一化 使得模型更容易训练
+- Attention Masks
+  - 在计算注意力权重时 需要对输入序列进行掩码处理 以防止模型看到未来的信息 或是被填充的部分影响
+  - 掩码一般是用负无穷来消除掉对应权重
+  - 掩码有两种
+    - Self-Attention Mask：用于掩码填充部分
+    - Cross-Attention Mask：用于 Decoder 忽略输入序列中填充部分
+    - Causal Mask：用于 Decoder 掩码未来的信息
+- 训练方法：梯度下降
+
+- TF 存在的问题是训练数据不够 当数据量较小时 容易过拟合 然而我们可以把所有语言任务视为同一个任务 也就可以统一所有语言数据进行训练 这也就是预训练模型和大语言模型的由来
+
+### 预训练模型
+
+- 预训练模型有两步
+  1. 预训练：在大规模的无监督数据集上进行训练 使得模型能够学习到语言的基本规律
+  2. 微调：在小规模的有监督数据集上进行训练 使得模型能够适应特定的任务
+
+#### BERT
+
+- BERT（Bidirectional Encoder Representations from Transformers）是一种预训练模型 其使用了双向的 Transformer 编码器
+- BERT 的预训练任务有两个
+  - Masked Language Model：随机掩码输入序列中的一些单词（即用 mask 替换）然后训练模型去预测这些单词
+  - Next Sentence Prediction：预测两个句子是否相邻 即预测语句 B 在语句 A 后面的概率
+- BERT 的微调任务是将预训练的模型应用到特定的任务上 比如要做文本分类
+  - 只需要在 BERT 的基础上加一个线性层和 softmax 层作为分类器即可
+- BERT 不适合生成任务 只能用于分类任务
+
+#### GPT
+
+- GPT（Generative Pre-trained Transformer）是一种预训练模型 其使用了单向的 Transformer 解码器
+
+## L11 - LLM
+
+### Fine-tuning
+
+- 微调即根据特定任务的数据集来训练模型 使得模型能够适应特定的任务
+- hugging-face 提供了很多开源的预训练模型 可以直接下载下来进行微调
+- 微调需要的计算量比较大 PEFT（Parameter Efficient Fine-Tuning）是一种微调方法 其只需要微调模型与任务相关的一部分参数 而不是全部参数
+- LoRA（Low-Rank Adaptation）是一种 PEFT 方法 其通过将模型的权重矩阵分解为两个低秩矩阵来减少参数量
+
+### Prompt Engineering
+
+- 提示词（Prompt）是一种用于引导模型生成特定输出的文本 其可以是一个问题、一个句子或一个段落
+- 最基本的Prompt是直接给出问题或任务的描述
+- Few-shot Prompt：给定一些示例来引导模型生成特定输出
+- Chain-of-thought Prompt：给定一些推理过程来引导模型生成特定输出
+- ReAct Prompt：给定一些反应过程来引导模型生成特定输出
+
+### RAG
+
+- RAG（Retrieval-Augmented Generation）是一种结合了检索和生成的模型 其通过检索相关的信息来增强生成的能力 
+- 具体而言
+  1. 首先根据输入的文本检索相关的信息
+  2. 然后将检索到的信息与输入的文本一起输入到生成模型中
+  3. 最后生成模型根据输入的文本和检索到的信息生成输出
+- RAG由3个部分组成
+  - Embedding：将输入的文本和检索到的信息映射为向量
+  - Vector Store：存储向量化的信息
+  - LLM：生成模型
