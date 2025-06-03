@@ -769,10 +769,20 @@ CEDS 即黄子昂学长的硕士毕业论文中提出的云边融合存储系统
 ## FL
 
 - 要做的
-  - DAGNN GAT GCN
   - 会生成有环图 但是可以保存生成过的 dag 进行数据增强
-  - 当节点数比较少时 质量较好的 dag 数量较少 critic 肯定会过拟合 比如选择 gat 手动归一化的模型进行训练 最终收敛的效果很好 可以完全随机生成图来保证泛化性
-  - 修改一下 tabddpm 的代码 然后直接把 critic 和 tabddpm 结合进去
+  - VAE 问题
+    - loss 基本从第一个 epoch 后就收敛了
+    - 对于离散特征列可能需要使用独热编码 并且针对每一个列训练单独的 decoder
+    - 如果实在不行 也可以用 Transformer Encoder
+    - mse 重构损失对于顺序敏感 不适合表格数据 因此我改用 stats+mmd 重构出来的数据看起来比较合理
+    - encode 为什么全是一样的？
+  - tabppdm 问题
+    - 把特征向量的列作为 label 进行训练 最终用条件变量控制生成不同的列特征向量
+  - critic
+    - 目前选择 gat 自动归一化且带 baseline 的模型进行预训练 并随机生成图来保证泛化性 可以把 vae 得到的特征向量作为节点的向量输入
+  - 现在 cdrl 计算 bic 是基于预处理后的数据 然而预处理只是简单的归一化 可以尝试输入原数据来计算 bic 试试 但是原数据不能有非数值特征
+  - 采样时应该输入原数据 还是预处理后的数据呢
+  - 表格数据采样[din,max_length]的一批向量 作为 VAE 的训练数据 VAE 输入[,din]输出[,dout]的特征向量 作为 tabppdm 的训练数据 tabppdm 训练好的 denoise 可以生成[n,dout]的特征向量 在此 n=max_length，dout=hidden_dim 并重复 batch_size 次 得到[batch_size,max_length,dout]的特征向量作为 decoder 的输入
 - 目前有 2 种方案
   1. 还是用 dag 为输入 用一些其他库的方法 比如 bnlearn
      - 流程：先采样样本 样本输入 bnlearn 生成一批 dag 输入给 critic 输出预测 reward 然后计算 dag 的真实 reward 计算损失函数
@@ -780,9 +790,6 @@ CEDS 即黄子昂学长的硕士毕业论文中提出的云边融合存储系统
      - 批量从原数据采样 形成[batch_size, max_length, n_samples]形状的 enc_i 输入给 decoder 生成 dag 进行训练 其中的 n_samples 是超参
      - 问题：架构图中 输入 actor 的是相似的数据 直接从数据生成 dag 有些不合理 尤其是单层的 decoder 后续可能可以先做嵌入再 diffusion
 - critic 和 actor 的 diffusion 先预训练 这两部分先并行做起来 看看效果 最后可以对比三种效果：完全交替训练、完全分阶段训练、先预训练再交替训练
-- 把 Diffusion VAE 写了 https://github.com/openai/guided-diffusion
-- 看一下 Diffusion 完整时间步采样要多久 如果说很慢 能不能近似
-- 生成 DAG 有环的问题
 - 隐私保护的评估：差分隐私相关论文
 
 ## Other

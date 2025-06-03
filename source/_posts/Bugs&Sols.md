@@ -124,6 +124,10 @@ excerpt: " "
 
 - builderKit 是用于在镜像 build 期间多阶段构建的插件 在使用时发现 `--mount=type=bind`指令无法挂载宿主机的目录 一般使用`--mount=type=cache`来缓存 mvn 或 pip 的依赖包
 
+## ML
+
+- 计算能力较强的卡使用原生 tf1 会报错 解决方法是使用 nvidia 提供的 tf 包：https://github.com/qqwweee/keras-yolo3/issues/332
+
 ## 杂项
 
 - 将后端改为使用 https 但前端仍为 http 时 会导致跨域问题 具体而言 服务器通过响应 body 里的 set-cookie 项来提供 cookie 其中有一个 samesite 属性用于告诉浏览器（客户端）这个 cookie 在什么时候需要发送 如果响应体里没有 samesite 属性 浏览器默认设置其为 lax 这会导致后端只能在不跨站（前端后端 url）的情况下发送 cookie 解决方法是后端显式设置 samesite 为 none 即不管何时都发送
