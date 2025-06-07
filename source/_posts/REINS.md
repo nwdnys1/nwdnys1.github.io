@@ -780,9 +780,6 @@ CEDS 即黄子昂学长的硕士毕业论文中提出的云边融合存储系统
     - 把特征向量的列作为 label 进行训练 最终用条件变量控制生成不同的列特征向量
   - critic
     - 目前选择 gat 自动归一化且带 baseline 的模型进行预训练 并随机生成图来保证泛化性 可以把 vae 得到的特征向量作为节点的向量输入
-  - 现在 cdrl 计算 bic 是基于预处理后的数据 然而预处理只是简单的归一化 可以尝试输入原数据来计算 bic 试试 但是原数据不能有非数值特征
-  - 采样时应该输入原数据 还是预处理后的数据呢
-  - 表格数据采样[din,max_length]的一批向量 作为 VAE 的训练数据 VAE 输入[,din]输出[,dout]的特征向量 作为 tabppdm 的训练数据 tabppdm 训练好的 denoise 可以生成[n,dout]的特征向量 在此 n=max_length，dout=hidden_dim 并重复 batch_size 次 得到[batch_size,max_length,dout]的特征向量作为 decoder 的输入
 - 目前有 2 种方案
   1. 还是用 dag 为输入 用一些其他库的方法 比如 bnlearn
      - 流程：先采样样本 样本输入 bnlearn 生成一批 dag 输入给 critic 输出预测 reward 然后计算 dag 的真实 reward 计算损失函数

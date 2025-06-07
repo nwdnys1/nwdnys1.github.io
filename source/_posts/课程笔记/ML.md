@@ -612,6 +612,15 @@ excerpt: " "
 - 可以看到 REINFORCE 的核心思想是使用 Monte Carlo 方法来估计 J(θ)的梯度 也就是通过采样的轨迹来估计 Q(s,a) 也就是说 轨迹的实际回报值 G_t = ∑γ^k-t \* r_k (k=t+1,...,T) 代表着当前状态下的动作价值函数 Q(s,a)
 - 由于 G_t 是一个随机变量 因此 REINFORCE 的方差较大 但是偏差较小 可以引入 baseline 方法来减少方差
 
+#### MCTS
+
+- MCTS（Monte Carlo Tree Search）是一种基于采样的搜索算法 其主要思想是通过随机采样来估计状态的价值
+- MCTS 包含四个步骤
+  1. 选择（Selection）：从根节点开始 根据 UCT（Upper Confidence Bound for Trees）选择一个子节点 直到到达叶子节点
+  2. 扩展（Expansion）：在叶子节点上扩展一个新的子节点
+  3. 模拟（Simulation）：从新扩展的子节点开始进行随机模拟 直到到达终止状态
+  4. 回溯（Backpropagation）：将模拟结果回传到根节点 更新每个节点的访问次数和总奖励
+
 #### Actor-Critic
 
 - Actor-Critic 是一种结合了基于价值函数和基于策略的方法 其主要思想是使用一个价值函数来估计当前策略的价值 然后使用这个价值函数来更新策略
@@ -653,4 +662,27 @@ excerpt: " "
 - 两者的本质都是在限制目标函数 L 不会增长过大 从而限制 θ 的更新幅度
 - 其中 PPO-Clip 算法在实际应用中效果更好 实现更简单
 
-## L18 - RL Applications
+## L18 - Optimization
+
+### Challenge
+
+- Local Minima：局部最优是指在某个区域内的最小值或最大值 也就是梯度为 0 且 Hessian 矩阵大于 0 的点
+- Saddle Point：鞍点是指在某个方向上是最小值 在另一个方向上是最大值的点 也就是梯度为 0 但是 Hessian 矩阵不是正定的点
+- Vanishing Gradients：平坦区域是指梯度接近于 0 的区域 也就是梯度的范数非常小的区域
+
+### Learning Mode
+
+- 在线学习：在线学习是指模型在每次接收到新的数据时都进行更新 而不是等到所有数据都准备好后再进行更新 这种方式可以减少内存的使用 但是需要注意模型的稳定性
+- 离线学习：离线学习是指模型在所有数据都准备好后再进行更新 这种方式可以保证模型的稳定性 但是需要更多的内存
+- 批量梯度下降：批量梯度下降是指在每次更新时使用所有数据来计算梯度 这种方式可以保证模型的稳定性 同时可以根据内存调整批量大小
+
+### Optimization Algorithm
+
+- SGDM（Stochastic Gradient Descent with Momentum）：类似于物理中的动量 学习率会随着 epoch 不断积累 从而使得模型在梯度下降时具有惯性 可以加速收敛并减少振荡
+- Adaptive Learning Rate：自适应学习率是指根据梯度的变化来调整学习率 使得模型在训练过程中可以更快地收敛
+  - AdaGrad（Adaptive Gradient）：根据每个参数的历史梯度来调整学习率 使得每个参数的学习率都不同 适用于稀疏数据
+  - RMSProp（Root Mean Square Propagation）：类似于 AdaGrad 但是使用指数衰减平均来计算每个参数的学习率 使得学习率不会过小 适用于非平稳数据
+  - Adam（Adaptive Moment Estimation）：结合了 SGDM 和 RMSProp 的优点 使用动量和自适应学习率来更新参数 适用于大多数场景
+
+## Review
+- 
