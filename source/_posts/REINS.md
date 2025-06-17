@@ -785,9 +785,8 @@ CEDS 即黄子昂学长的硕士毕业论文中提出的云边融合存储系统
      - 流程：先采样样本 样本输入 bnlearn 生成一批 dag 输入给 critic 输出预测 reward 然后计算 dag 的真实 reward 计算损失函数
   2. 用 enc_i 作为输入 要么输入的是原始数据采样 要么是用 ganblr 生成的相似数据 X'
      - 批量从原数据采样 形成[batch_size, max_length, n_samples]形状的 enc_i 输入给 decoder 生成 dag 进行训练 其中的 n_samples 是超参
-     - 问题：架构图中 输入 actor 的是相似的数据 直接从数据生成 dag 有些不合理 尤其是单层的 decoder 后续可能可以先做嵌入再 diffusion
 - critic 和 actor 的 diffusion 先预训练 这两部分先并行做起来 看看效果 最后可以对比三种效果：完全交替训练、完全分阶段训练、先预训练再交替训练
-- 隐私保护的评估：差分隐私相关论文
+
 
 ## Other
 
